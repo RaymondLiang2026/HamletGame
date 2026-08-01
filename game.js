@@ -164,6 +164,12 @@ const Sound = {
   checkpoint(){ [523,784,1047].forEach((f,i)=>this.blip(f,.16,'triangle',.34,i*.08)); },
   charge(){ this.blip(180,.5,'sawtooth',.3,0,720); },
   ult(){ [110,146,196,262,392].forEach((f,i)=>this.blip(f,.5,'sawtooth',.44,i*.06,f*2)); this.noise(.6,.3,0,120); },
+  // 疯朋克奥菲莉亚：失真尖啸音效（去调锯齿簇 + 噪声，强化朋克疯癫形象）
+  punkGlitch(){ if(!this.ctx||!this.enabled) return;
+    [138,146,207].forEach((f,i)=>this.blip(f*(1+i*0.04),.5,'sawtooth',.15,i*.02,f*0.6));
+    this.noise(.34,.13,0,600);
+    this.blip(440,.28,'sawtooth',.09,.05,110);
+  },
   // ---- 过场短曲 ----
   jingle(name){
     if(!this.ctx||!this.enabled) return;
@@ -586,6 +592,14 @@ function drawHamlet(cx, cy, facing, pose, act){
   // 肩章扣子
   px(-8+lean*0.4, torsoY, 2, 2, S.gold?'#fff0c0':'#c9b98a');
   px(8+lean*0.4, torsoY, 2, 2, S.gold?'#fff0c0':'#c9b98a');
+
+  // 递进式服饰细节：随幕数增加装饰（第一幕简洁 → 终章最精细；成功路线金饰，失败路线暗紫破损）
+  const orn = S.gold? S.accent : (S.doom? '#6a3a7c' : S.trim);
+  if(act>=1){ px(-2+lean*0.4, torsoY-2, 4, 2, orn); }                          // 领口金属扣
+  if(act>=2){ px(-6+lean*0.4, torsoY+3, 12, 1, orn); px(-5+lean*0.4, torsoY+7, 11, 1, S.coatShadow); } // 胸前斜纹绶带
+  if(act>=3){ px(-10+lean*0.4, torsoY+3, 2, 4, orn); px(9+lean*0.4, torsoY+3, 2, 4, orn); }             // 肩部流苏
+  if(act>=4){ px(3+lean*0.4, torsoY+5, 3, 3, orn); px(4+lean*0.4, torsoY+6, 1, 1, S.gold?'#fff0c0':(S.doom?'#2a1030':'#1a1420')); } // 胸前勋章/纹章
+  if(S.doom && act>=5){ px(-4+lean*0.4, torsoY+10, 5, 1, '#2a0f30'); px(1+lean*0.4, torsoY+15, 3, 1, '#2a0f30'); } // 终章失败：破损裂纹
 
   // ---- 手臂 & 武器 ----
   drawHamletArm(S, act, torsoY, baseY, lean, {atk,ranged,walk,jump,armSwing,t,pose});
@@ -2822,7 +2836,7 @@ function updatePunkOphelia(){
   po.lineT--; if(po.lineT<=0){ po.lineT=280;
     const madLines=['他死了，去了，小姐……','这是三色堇，是为了思念。','明天是圣瓦伦丁节……','他不会回来了吗？'];
     po.lineI=(po.lineI+1)%madLines.length;
-    if(Math.abs(po.x-player.x)<VW*0.7) addFloater(po.x, GROUND_TOP-90, madLines[po.lineI], '#d6a8e8', 12);
+    if(Math.abs(po.x-player.x)<VW*0.7){ addFloater(po.x, GROUND_TOP-90, madLines[po.lineI], '#d6a8e8', 12); Sound.punkGlitch(); }
   }
 }
 
