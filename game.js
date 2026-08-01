@@ -850,12 +850,15 @@ function drawBoss(b){
   ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx,cy,b.w*0.5,5,0,0,6.283); ctx.fill();
   // 阶段光环（颜色随 kind）
   const auraBase = { claudius:(b.phase===1?'rgba(200,170,90,':(b.phase===2?'rgba(200,90,90,':'rgba(255,40,40,')),
-    ghostking:'rgba(143,208,255,', clown:'rgba(255,155,208,', assassin:'rgba(127,224,200,', laertes:'rgba(255,90,90,' }[b.kind] || 'rgba(200,170,90,';
+    ghostking:'rgba(143,208,255,', clown:'rgba(255,155,208,', assassin:'rgba(127,224,200,', laertes:'rgba(255,90,90,',
+    rosencrantz:'rgba(127,184,232,', guildenstern:'rgba(127,224,168,' }[b.kind] || 'rgba(200,170,90,';
   ctx.save(); ctx.globalAlpha=0.35+0.2*Math.sin(frame*0.1); const g=ctx.createRadialGradient(cx,cy-b.h*0.5,4,cx,cy-b.h*0.5,b.h); g.addColorStop(0,auraBase+'0.5)'); g.addColorStop(1,auraBase+'0)'); ctx.fillStyle=g; ctx.fillRect(cx-b.w,cy-b.h*1.5,b.w*2,b.h*1.6); ctx.restore();
   ctx.translate(cx,cy); ctx.scale(f,1);
   const w=b.hitFlash>0; const t=frame; const H=b.h;
   if(b.kind==='ghostking') drawBossGhostKing(b,w,t,H);
   else if(b.kind==='clown') drawBossClown(b,w,t,H);
+  else if(b.kind==='rosencrantz') drawBossCourtier(b,w,t,H,'#2a5a8a','#7fb8e8','#c9a24a');
+  else if(b.kind==='guildenstern') drawBossCourtier(b,w,t,H,'#2a6a4a','#7fe0a8','#c9a24a');
   else if(b.kind==='assassin') drawBossAssassin(b,w,t,H);
   else if(b.kind==='laertes') drawBossLaertes(b,w,t,H);
   else drawBossClaudius(b,w,t,H);
@@ -996,6 +999,40 @@ function drawBossLaertes(b,w,t,H){
   ctx.fillStyle='rgba(150,255,110,'+(0.5+0.3*Math.sin(t*0.2))+')'; px(12,-H-16,2,8,'rgba(150,255,110,0.8)');
   if(b.atkT>0){ ctx.strokeStyle='rgba(150,255,110,0.7)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(11,-H+14,26,-1.2,0.9);ctx.stroke(); }
 }
+// 罗森格兰兹 / 吉尔登斯顿（第三幕双人小 Boss，宫廷朝臣）—— 以主色区分两人
+function drawBossCourtier(b,w,t,H,robe,trim,gold){
+  const bob=Math.sin(t*0.1)*1.5;
+  // 长袍下摆
+  ctx.fillStyle=tint(robe,w);
+  ctx.beginPath();ctx.moveTo(-13,-22);ctx.lineTo(13,-22);ctx.lineTo(17,0);ctx.lineTo(-17,0);ctx.closePath();ctx.fill();
+  // 腿
+  px(-9,-24,7,24,tint('#2a2a32',w)); px(3,-24,7,24,tint('#20202a',w));
+  // 躯干（宫廷礼服 + 金边）
+  px(-12,-H+16+bob,24,32,tint(robe,w));
+  px(7,-H+16+bob,5,32,tint(trim,w));
+  px(-12,-H+16+bob,4,32,'rgba(0,0,0,0.25)');
+  px(-12,-H+16+bob,24,4,tint(gold,w));
+  px(-2,-H+16+bob,4,32,tint(gold,w)); // 前襟金扣带
+  // 披风
+  ctx.fillStyle=tint(robe,w); ctx.globalAlpha=0.85;
+  ctx.beginPath();ctx.moveTo(-11,-H+18+bob);ctx.lineTo(-22-Math.sin(t*0.08)*3,-2);ctx.lineTo(-4,-16);ctx.closePath();ctx.fill();
+  ctx.globalAlpha=1;
+  // 皱领
+  px(-13,-H+14+bob,26,4,tint('#e8e0d0',w));
+  // 头
+  px(-8,-H+bob,16,15,tint('#c9a98c',w));
+  px(-8,-H-2+bob,16,5,tint('#3a2a1a',w)); // 短发
+  px(-5,-H+5+bob,3,2,'#2a1810'); px(2,-H+5+bob,3,2,'#2a1810');
+  // 羽毛便帽
+  ctx.fillStyle=tint(robe,w); px(-9,-H-4+bob,18,4,tint(robe,w));
+  ctx.fillStyle=tint(trim,w); ctx.beginPath();ctx.moveTo(8,-H-4+bob);ctx.lineTo(16,-H-12+bob);ctx.lineTo(10,-H-2+bob);ctx.closePath();ctx.fill();
+  // 细剑
+  px(11,-H+12+bob,3,4,tint(gold,w));
+  px(12,-H-14+bob,2,26,tint('#d8d4c4',w));
+  px(12,-H-14+bob,1,26,'#f0f0f0');
+  if(b.atkT>0){ ctx.strokeStyle=hexToRgba(trim,0.7);ctx.lineWidth=3;ctx.beginPath();ctx.arc(11,-H+14+bob,24,-1.2,0.9);ctx.stroke(); }
+}
+function hexToRgba(hex,a){ const n=parseInt(hex.slice(1),16); return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'; }
 
 /* -------------------------------------------------------------------------
    10. 世界物件绘制（平台/地形/机关/箱子/宝箱/检查点/触发区/拾取/终点）
@@ -1121,6 +1158,12 @@ function drawBowPickup(bp){
   ctx.strokeStyle='#8a6a3a';ctx.lineWidth=3;ctx.beginPath();ctx.arc(2,0,13,-1.3,1.3);ctx.stroke();
   ctx.strokeStyle='rgba(200,180,255,0.9)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(2+13*Math.cos(-1.3),13*Math.sin(-1.3));ctx.lineTo(-6,0);ctx.lineTo(2+13*Math.cos(1.3),13*Math.sin(1.3));ctx.stroke();
   ctx.fillStyle='#c9a6ff';ctx.beginPath();ctx.arc(-2,0,3,0,6.283);ctx.fill();
+  // 明显拾取提示文字
+  ctx.font='bold 9px "Courier New",monospace'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(8,6,14,0.6)'; ctx.fillRect(-92,-40,184,13);
+  ctx.strokeStyle='rgba(185,139,255,0.7)'; ctx.lineWidth=1; ctx.strokeRect(-92,-40,184,13);
+  ctx.fillStyle='#e8dcff'; ctx.fillText('拾取 亡魂之弓 — 解锁远程攻击 [F/Z键]', 0, -30);
+  ctx.textAlign='left';
   ctx.restore();
 }
 function drawGoal(gx, gy){
@@ -1155,6 +1198,76 @@ function drawPickupItem(it){
 const GROUND_TOP = 600;         // 地面顶部世界 Y
 const LEVEL_H = 760;            // 世界高度
 const PLAYER_W = 22, PLAYER_H = 44;
+
+/* -------------------------------------------------------------------------
+   跳跃能力常量 & 关卡通行性保障（修复"密集地刺无法通过"问题）
+   由玩家物理（JUMP_VEL/GRAVITY/MOVE_SPEED）保守推导：
+     起跳峰高 ≈ 12.6²/(2·0.62) ≈ 128px；同高水平位移 ≈ 3.4·40 ≈ 136px
+   取保守值，确保任何地刺/坑洞段都存在"相邻落脚点间距 ≤ 最大跳跃距离"的通行路径。
+   ------------------------------------------------------------------------- */
+const MAX_JUMP_UP = 118;        // 起跳最大可达上升高度（校验用，保守）
+const MAX_JUMP_DX = 128;        // 同高度最大水平跳跃距离（校验用，保守）
+const BRIDGE_GAP  = 116;        // 落脚点间隙超过此值必须补踏脚石（留余量 < MAX_JUMP_DX）
+const STEP_UP     = 64;         // 补的踏脚石相对地面的抬升高度（< MAX_JUMP_UP）
+const MAX_PIT_W   = 110;        // 单个坑/地刺段的最大宽度（≤ 可跳距离，绝不做死路）
+
+// 收集所有可站立表面（地面 + 单向平台 + 移动平台，移动平台按行程取覆盖范围）
+function levelFootholds(lv){
+  const fh=[];
+  for(const p of lv.platforms){ fh.push({x1:p.x, x2:p.x+p.w, y:p.y}); }
+  for(const m of lv.movers){
+    const rx = m.axis==='x' ? (m.range||0) : 0;
+    const bx = (m.baseX!==undefined?m.baseX:m.x), by=(m.baseY!==undefined?m.baseY:m.y);
+    fh.push({x1:bx-rx, x2:bx+m.w+rx, y:by});
+  }
+  return fh;
+}
+// 通行性校验：玩家起点落脚点能否经"可跳跃边"到达终点落脚点（BFS）
+// 返回 {ok:true} 或 {ok:false, reason, gap, atX}
+function validateTraversable(lv){
+  const fh=levelFootholds(lv);
+  if(!fh.length) return {ok:false, reason:'无任何落脚点'};
+  const goalX = lv.goalX || (lv.width-140);
+  const findGround=(x)=>{ let best=-1,bd=1e9; for(let i=0;i<fh.length;i++){ const f=fh[i]; if(x>=f.x1-6&&x<=f.x2+6){ const d=Math.abs(f.y-GROUND_TOP); if(d<bd){bd=d;best=i;} } } return best; };
+  const s=findGround(lv.playerStart.x), g=findGround(goalX);
+  if(s<0) return {ok:false, reason:'起点无落脚点', atX:lv.playerStart.x};
+  if(g<0) return {ok:false, reason:'终点无落脚点', atX:goalX};
+  const canJump=(a,b)=>{
+    const gap = Math.max(b.x1-a.x2, a.x1-b.x2, 0); // 边缘水平间隙（重叠取 0）
+    const rise = a.y - b.y;                        // b 比 a 高多少
+    return gap<=MAX_JUMP_DX && rise<=MAX_JUMP_UP;
+  };
+  const seen=new Array(fh.length).fill(false); const q=[s]; seen[s]=true;
+  while(q.length){ const i=q.shift(); if(i===g) return {ok:true};
+    for(let j=0;j<fh.length;j++){ if(!seen[j] && canJump(fh[i],fh[j])){ seen[j]=true; q.push(j); } } }
+  // 定位最大断裂间隙（供报错）
+  let worst=0, atX=0;
+  const gs=lv.platforms.filter(p=>p.type==='ground'&&Math.abs(p.y-GROUND_TOP)<1).map(p=>({x1:p.x,x2:p.x+p.w})).sort((a,b)=>a.x1-b.x1);
+  for(let i=0;i<gs.length-1;i++){ const gap=gs[i+1].x1-gs[i].x2; if(gap>worst){ worst=gap; atX=gs[i].x2; } }
+  return {ok:false, reason:'起点无法跳跃抵达终点（存在过宽断点）', gap:worst, atX};
+}
+// 通行性保障：对任何过宽的地面间隙均匀补入踏脚石（保留地刺，只确保可跳过）
+function ensureTraversable(lv){
+  const grounds=lv.platforms.filter(p=>p.type==='ground'&&Math.abs(p.y-GROUND_TOP)<1)
+    .map(p=>({x1:p.x,x2:p.x+p.w})).sort((a,b)=>a.x1-b.x1);
+  const spans=[];
+  for(const gp of grounds){
+    if(spans.length && gp.x1<=spans[spans.length-1].x2+1) spans[spans.length-1].x2=Math.max(spans[spans.length-1].x2,gp.x2);
+    else spans.push({x1:gp.x1,x2:gp.x2});
+  }
+  for(let i=0;i<spans.length-1;i++){
+    const leftEdge=spans[i].x2, rightEdge=spans[i+1].x1, gap=rightEdge-leftEdge;
+    if(gap<=BRIDGE_GAP) continue;
+    const n=Math.ceil(gap/BRIDGE_GAP)-1;   // 需补的踏脚石数量
+    for(let k=1;k<=n;k++){
+      const cxc=leftEdge+gap*k/(n+1);
+      // 该处附近若已有可达落脚平台则不重复补
+      const covered=lv.platforms.some(p=>p.type!=='ground'&&p.x<cxc+22&&p.x+p.w>cxc-22&&p.y>=GROUND_TOP-MAX_JUMP_UP&&p.y<=GROUND_TOP-20);
+      if(covered) continue;
+      lv.platforms.push({x:cxc-30, y:GROUND_TOP-STEP_UP, w:60, h:14, type:'plat', bridge:true});
+    }
+  }
+}
 
 let level = null;               // 当前关卡数据
 // 实时实体数组
@@ -1198,22 +1311,27 @@ function buildStandard(cfg){
     bg:null, isBoss:false
   };
   // 起始安全地面
-  let cx=0;
+  let cx=0, justPit=false;
   const segLen = width/3;
   while(cx < width-260){
-    // 决定是否挖坑（第一段少，后段多）
+    // 决定是否挖坑（第一段少，后段多）——坑后必须紧跟安全地面，绝不连续挖坑
     const seg = cx/segLen; // 0..3
     const pitChance = (cfg.pitBase||0.12) + seg*0.05;
-    const makePit = cx>360 && cx<width-360 && rng()<pitChance;
+    const makePit = !justPit && cx>360 && cx<width-360 && rng()<pitChance;
     if(makePit){
-      const pitW = 70 + rng()*(cfg.maxPit||90);
-      // 坑底放危险
+      // 坑宽严格限制在可跳范围内（≤ MAX_PIT_W），保证单跳即可越过，绝不做无落脚死路
+      let pitW = 56 + rng()*44;                 // 56..100
+      pitW = Math.min(pitW, MAX_PIT_W);
+      // 坑底放危险（地刺/毒/水），但坑两侧地面即为落脚点
       const hzType = cfg.pitHazard || (rng()<0.5?'spike':'poison');
       lv.hazards.push({x:cx, y:GROUND_TOP+30, w:pitW, h:LEVEL_H-GROUND_TOP-30, type:hzType==='void'?'water':hzType});
-      // 若坑较宽，中间放跳板
-      if(pitW>110){ lv.platforms.push({x:cx+pitW/2-30,y:GROUND_TOP-70,w:60,h:14,type:'plat'}); }
+      // 坑略宽时中间再放一块踏脚平台，进一步降低难度
+      if(pitW>86){ lv.platforms.push({x:cx+pitW/2-30,y:GROUND_TOP-STEP_UP,w:60,h:14,type:'plat'}); }
       cx += pitW;
+      justPit=true;                             // 标记：下一段强制为安全地面
+      continue;                                 // 坑后不生成悬浮平台层，保持通道清晰
     } else {
+      justPit=false;
       const gw = 200 + rng()*260;
       lv.platforms.push({x:cx, y:GROUND_TOP, w:gw+4, h:LEVEL_H-GROUND_TOP, type:'ground'});
       // 地面上的内容
@@ -1316,12 +1434,17 @@ function buildAct(idx){
     lv.bowPickup={x:lv.width*0.12, y:GROUND_TOP-40, w:34, h:34, taken:false};
     lv.segments=[{x:0,name:'宫廷回廊'},{x:lv.width/3,name:'追逐奥菲莉亚'},{x:lv.width*2/3,name:'小丑的舞台'}];
     appendBossArena(lv,'clown',{completesLevel:true});
-  } else if(idx===ACT_ESCAPE){ // 第三幕 逃亡 —— 疯朋克奥菲莉亚背景游荡；后段彩蛋入口
+  } else if(idx===ACT_ESCAPE){ // 第三幕 逃亡 —— 疯朋克奥菲莉亚背景游荡；关底双人小 Boss 罗森格兰兹/吉尔登斯顿；后段彩蛋入口
     lv=buildStandard({seed:303, width:6200, enemies:['patrol','archer','shield','skeleton'], enemyChance:0.6, pitBase:0.16, pitHazard:'poison', elite:true});
     lv.punkOphelia={ baseX:lv.width*0.22, x:lv.width*0.22, phase:0, lineT:150, lineI:0 };
-    lv.triggers.push({x:lv.width*0.62, y:GROUND_TOP-120, w:60, h:120, type:'egghint', fired:false, key:'egghint'});
-    lv.goalX=lv.width-160; lv.completeMode='goal';
-    lv.segments=[{x:0,name:'宫廷走廊'},{x:lv.width/3,name:'仓皇出逃'},{x:lv.width*2/3,name:'湖边小径 →'}];
+    lv.triggers.push({x:lv.width*0.55, y:GROUND_TOP-120, w:60, h:120, type:'egghint', fired:false, key:'egghint'});
+    lv.segments=[{x:0,name:'宫廷走廊'},{x:lv.width/3,name:'仓皇出逃'},{x:lv.width*2/3,name:'旧友的埋伏 →'}];
+    appendBossArena(lv,'rosencrantz',{});
+    const raX=lv.width-660;
+    lv.bossPlan=[
+      { kind:'rosencrantz',  triggerX:raX+40, started:false, defeated:false, pairFirst:true },
+      { kind:'guildenstern', triggerX:raX,    started:false, defeated:false, completesLevel:true }
+    ];
   } else if(idx===ACT_LAKE){ // 彩蛋关 湖边（限时救援疯朋克奥菲莉亚）
     lv=buildStandard({seed:404, width:5200, enemies:['patrol','archer','skeleton'], enemyChance:0.5, pitBase:0.28, maxPit:120, pitHazard:'void'});
     lv.water=true;
@@ -1337,6 +1460,7 @@ function buildAct(idx){
   } else { // 第五幕 墓地/宫廷走廊/王座（终章：中段雷欧提斯 + 最终克劳迪奥）
     lv=buildAct5();
   }
+  ensureTraversable(lv);          // 通行性保障：确保任何地刺/坑洞段都有可跳过的落脚点
   lv.secretTotal = lv.chests.length;
   return lv;
 }
@@ -1391,16 +1515,17 @@ function buildAct5(){
 
 // 在 [x0,x1) 范围内铺设地面段与内容（供第五幕分段使用）
 function buildGroundRange(lv,rng,x0,x1,cfg){
-  let cx=x0;
+  let cx=x0, justPit=false;
   while(cx<x1-200){
     const seg=(cx-x0)/(x1-x0)*3;
-    const makePit = cx>x0+300 && cx<x1-300 && rng()<(cfg.pitBase||0.14);
+    const makePit = !justPit && cx>x0+300 && cx<x1-300 && rng()<(cfg.pitBase||0.14);
     if(makePit){
-      const pitW=70+rng()*80;
+      let pitW=Math.min(56+rng()*44, MAX_PIT_W);   // 56..100, ≤ 可跳距离
       lv.hazards.push({x:cx,y:GROUND_TOP+30,w:pitW,h:LEVEL_H-GROUND_TOP-30,type:cfg.pitHazard==='void'?'water':cfg.pitHazard||'spike'});
-      if(pitW>110) lv.platforms.push({x:cx+pitW/2-28,y:GROUND_TOP-70,w:56,h:14,type:'plat'});
-      cx+=pitW;
+      if(pitW>86) lv.platforms.push({x:cx+pitW/2-28,y:GROUND_TOP-STEP_UP,w:56,h:14,type:'plat'});
+      cx+=pitW; justPit=true; continue;
     } else {
+      justPit=false;
       const gw=200+rng()*220;
       lv.platforms.push({x:cx,y:GROUND_TOP,w:gw+4,h:LEVEL_H-GROUND_TOP,type:'ground'});
       if(rng()<0.5){ lv.breakables.push({x:cx+rand(40,gw-60),y:GROUND_TOP-26,w:26,h:26,kind:cfg.coffin?'coffin':'box',hp:2,hitT:0,dead:false,drop:rng()<0.4?'heart':(rng()<0.6?'ammo':'coin')}); }
@@ -1652,6 +1777,19 @@ const BOSS_INTRO = {
       en:'“Brevity is the soul of wit.”' },
     { zh:'哈姆雷特：“那就让我，戳穿你这层可笑的伪装！”', speak:true }
   ]}],
+  rosencrantz:[{ act:'ACT III · 湖边小径', title:'旧友的背叛 · 罗森格兰兹与吉尔登斯顿', portrait:2, lines:[
+    { zh:'两名昔日同窗自阴影中现身，奉克劳迪奥之命前来缉拿——罗森格兰兹与吉尔登斯顿。' },
+    { zh:'罗森格兰兹：“殿下，别怪我们。国王的差遣，我们不敢不从。”', speak:true },
+    { zh:'哈姆雷特：“像海绵一样吸干国王的恩宠，也终将被他一把攥干。”', speak:true,
+      en:'“He keeps them, like an ape, in the corner of his jaw.”' },
+    { zh:'（双人夹击：先击破罗森格兰兹，再迎战暴怒的吉尔登斯顿）' }
+  ]}],
+  guildenstern:[{ act:'ACT III · 湖边小径', title:'吉尔登斯顿 · 暴怒反扑', portrait:2, lines:[
+    { zh:'见同伙倒下，吉尔登斯顿拔剑咆哮，扑向哈姆雷特。' },
+    { zh:'吉尔登斯顿：“你杀了他！那就用命来偿！”', speak:true },
+    { zh:'哈姆雷特：“你们把我当笛子吹奏，却奏不出我半分心声！”', speak:true,
+      en:'“You would play upon me… you cannot play upon me.”' }
+  ]}],
   assassin:[{ act:'ACT IV · 异域荒滩', title:'英格兰雇佣刺客队长', portrait:4, lines:[
     { zh:'海岸尽头，一队黑衣刺客现身，为首者双刃泛着寒光。' },
     { zh:'刺客队长：“丹麦王付了双倍的金子——王子，你的旅程到此为止。”', speak:true },
@@ -1749,8 +1887,10 @@ function makeCompanion(kind){
     facing:1, onGround:false, hp:80, maxHp:80, active:true, atkT:0, atkCd:0, shootCd:60, invuln:0 };
 }
 const BOSSDEF = {
-  ghostking:{ name:'恶灵 · 老哈姆雷特国王', label:'恶灵先王 · THE WRAITH KING', w:48,h:98, phases:2, hp:130, music:'boss', summon:true, ranged:'spectral', dash:false, ult:false },
+  ghostking:{ name:'恶灵 · 老哈姆雷特国王', label:'恶灵先王 · THE WRAITH KING', w:48,h:98, phases:3, hp:170, music:'boss', summon:true, ranged:'spectral', dash:false, ult:false },
   clown:    { name:'小丑 · 波洛涅斯',       label:'小丑波洛涅斯 · THE FOOL',     w:44,h:90, phases:2, hp:120, music:'palace', summon:false, ranged:'throw', dash:true, ult:false },
+  rosencrantz:  { name:'罗森格兰兹',        label:'罗森格兰兹 · ROSENCRANTZ',    w:40,h:86, phases:1, hp:90,  music:'boss', summon:false, ranged:'arrow', dash:false, ult:false, midboss:true },
+  guildenstern: { name:'吉尔登斯顿',        label:'吉尔登斯顿 · GUILDENSTERN',   w:40,h:86, phases:1, hp:100, music:'boss', summon:false, ranged:false, dash:true,  ult:false, midboss:true },
   assassin: { name:'英格兰雇佣刺客队长',    label:'刺客队长 · ASSASSIN CAPTAIN', w:44,h:92, phases:2, hp:180, music:'england', summon:true, ranged:'dagger', dash:true, ult:false },
   laertes:  { name:'雷欧提斯',              label:'雷欧提斯 · LAERTES（毒剑）',  w:42,h:90, phases:1, hp:150, music:'boss', summon:false, ranged:false, dash:true, ult:false, poisonBlade:true, midboss:true },
   claudius: { name:'克劳迪奥',              label:'克劳迪奥 · CLAUDIUS',         w:44,h:90, phases:3, get hp(){return opheliaSaved?210:240;}, get music(){return opheliaSaved?'hero':'boss';}, summon:true, ranged:'poison', dash:true, ult:true, final:true }
@@ -2167,25 +2307,22 @@ function updateTriggersAndCheckpoints(){
 }
 function fireTrigger(tr){
   tr.fired=true;
-  if(tr.type==='ghost' && tr.key==='ghost'){ // 第一幕鬼魂
+  if(tr.type==='ghost'){ // 第一幕鬼魂现身
     showStory([{act:'ACT I · 城墙', title:'鬼魂现身', portrait:0, lines:[
-      { zh:'城墙尽头，寒雾翻涌。先王的鬼魂再度显形，抬手直指王座的方向。' },
-      { zh:'鬼魂：“为我复仇——但莫伤你母亲，把她交给上苍。”', speak:true,
-        en:'“Taint not thy mind, nor let thy soul contrive against thy mother aught.”' }
-    ]}], ()=>{ goalLocked=false; state=STATE.PLAY; addFloater(player.x,player.y-30,'前路已开！','#e8c25a',15); });
-  } else if(tr.type==='intel'){ level.intelGot=(level.intelGot||0)+1; addScore(60); Sound.coin();
-    addFloater(tr.x+tr.w/2, tr.y-8, '情报 '+level.intelGot+'/'+level.intelTotal, '#d8b8f0', 14);
-    burst(tr.x+tr.w/2, tr.y+tr.h/2, '#d8b8f0', 10, 3);
-    if(level.intelGot>=level.intelTotal){ goalLocked=false;
-      showStory(STORY.a2_end, ()=>{ state=STATE.PLAY; addFloater(player.x,player.y-30,'戏中戏就绪！','#e8c25a',15); });
-    }
-  } else if(tr.key==='play'){ // 第三幕 戏中戏
-    showStory(STORY.a3_play, ()=>{ goalLocked=false; state=STATE.PLAY; });
-  } else if(tr.key==='polonius'){ // 误杀波洛涅斯
-    showStory(STORY.a3_polonius, ()=>{ state=STATE.PLAY; });
-  } else if(tr.type==='yorick'){ // 第五幕墓地
+      { zh:'城墙尽头，寒雾翻涌。先王的鬼魂再度显形，抬手直指城堡深处。' },
+      { zh:'鬼魂：“为我复仇——但那被死神攫住的躯壳，已认不得你了。”', speak:true,
+        en:'“Taint not thy mind…”' },
+      { zh:'（继续深入，直面恶灵版的老哈姆雷特国王）' }
+    ]}], ()=>{ state=STATE.PLAY; addFloater(player.x,player.y-30,'深入城堡！','#e8c25a',15); });
+  } else if(tr.type==='egghint'){ // 第三幕：通往湖边的线索
+    showStory([{act:'HIDDEN · 线索', title:'湖边的歌声', portrait:2, lines:[
+      { zh:'风里飘来断续的歌谣——是奥菲莉亚，就在前方的湖边小径。' },
+      { zh:'哈姆雷特：“那歌声……她独自在湖边，太危险了。”', speak:true },
+      { zh:'（抵达本幕终点，将进入隐藏彩蛋关 · 柳树湖畔）' }
+    ]}], ()=>{ state=STATE.PLAY; });
+  } else if(tr.type==='yorick'){ // 终章墓地
     showStory(STORY.a5_yorick, ()=>{ state=STATE.PLAY; });
-  } else if(tr.type==='rescue'){ // 第四幕救援成功
+  } else if(tr.type==='rescue'){ // 湖畔救援成功
     rescueOphelia();
   }
 }
@@ -2216,16 +2353,27 @@ function updateCompanion(){
 /* -------------------------------------------------------------------------
    21. Boss（克劳迪奥）三阶段
    ------------------------------------------------------------------------- */
-function startBoss(){
-  bossStarted=true;
-  boss=makeBoss();
-  Sound.setMusic(opheliaSaved?'hero':'boss', 1.1);
-  // 触发首段对白
-  showStory([{act:'ACT V · 王座大厅', title:'弑君者克劳迪奥', portrait:4, lines:[
-    { zh:'王座之上，克劳迪奥缓缓起身，握紧毒剑。' },
-    { zh:BOSS_LINES.p1.zh, speak:true, en:BOSS_LINES.p1.en },
-    { zh:'哈姆雷特：“恶贼，受死！为我父亲，为丹麦！”', speak:true }
-  ]}], ()=>{ state=STATE.PLAY; addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · 第一阶段', '#e8c25a', 16); });
+function startBoss(entry){
+  activeBossEntry=entry; entry.started=true; bossStarted=true;
+  boss=makeBoss(entry.kind);
+  const D=boss.def;
+  let mus = D.music || 'boss';
+  if(entry.final) mus = opheliaSaved?'hero':'boss';
+  Sound.setMusic(mus, 1.1);
+  const intro = BOSS_INTRO[entry.kind] || [];
+  showStory(intro, ()=>{ state=STATE.PLAY; addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · '+D.name, ACTS[actIndex].accent||'#e8c25a', 16); });
+}
+// Boss 计划驱动：所有含 level.bossPlan 的关卡通用（城堡/宫廷/英格兰关底 + 终章雷欧提斯&克劳迪奥）
+function updateBossPlan(){
+  if(boss){ updateBoss(); updateBossUlt(); return; }
+  if(state!==STATE.PLAY) return;
+  const plan=level.bossPlan;
+  for(const entry of plan){
+    if(entry.defeated) continue;      // 已击败：跳过，检查下一个
+    if(entry.started) return;         // 已开始但 boss 为空（过场中）：等待
+    if(player.x+player.w > entry.triggerX){ startBoss(entry); return; }
+    return;                           // 顺序触发：必须先击败前一个
+  }
 }
 function damageBoss(dmg, fromX, ranged){
   if(!boss||boss.dead||boss.invuln>0) return;
@@ -2234,33 +2382,36 @@ function damageBoss(dmg, fromX, ranged){
   spark(boss.x+boss.w/2, boss.y+boss.h*0.4, boss.x+boss.w/2>fromX?1:-1, '#ffb0b0');
   shake(3,6); Sound.bossHit();
   player.energy=Math.min(player.maxEnergy, player.energy+ (ranged?3:5));
-  const ratio=boss.hp/boss.maxHp;
-  if(ratio<=0.66 && boss.phase===1){ bossPhaseTransition(2); }
-  else if(ratio<=0.33 && boss.phase===2){ bossPhaseTransition(3); }
+  const ratio=boss.hp/boss.maxHp, ph=boss.phases;
+  if(ph>=3){
+    if(ratio<=0.66 && boss.phase===1) bossPhaseTransition(2);
+    else if(ratio<=0.33 && boss.phase===2) bossPhaseTransition(3);
+  } else if(ph===2){
+    if(ratio<=0.5 && boss.phase===1) bossPhaseTransition(2);
+  }
   if(boss.hp<=0){ boss.hp=0; onBossDefeated(); }
 }
 function bossPhaseTransition(ph){
   boss.phase=ph; boss.invuln=90; boss.atkCd=60;
-  Sound.bossPhase(); shake(10,24); flash(ph===3?'rgba(200,20,20,0.4)':'rgba(200,120,40,0.3)',18);
-  for(let i=0;i<26;i++) burst(boss.x+boss.w/2, boss.y+boss.h/2, ph===3?'#ff4040':'#ffb060', 1, 5);
-  const line = ph===2?BOSS_LINES.p2:BOSS_LINES.p3;
+  Sound.bossPhase(); shake(10,24); flash(ph>=3?'rgba(200,20,20,0.4)':'rgba(200,120,40,0.3)',18);
+  for(let i=0;i<26;i++) burst(boss.x+boss.w/2, boss.y+boss.h/2, ph>=3?'#ff4040':'#ffb060', 1, 5);
+  const line=(BOSS_PHASE_LINES[boss.kind]||{})[ph];
+  const lines=[];
+  if(line) lines.push({ zh:line.zh, speak:true, en:line.en });
+  lines.push({ zh: ph>=3?'血色染透战场——用尽全部力量，了结这一切！':'敌人形态骤变，攻势愈发凶猛！' });
   state=STATE.STORY;
-  showStory([{act:'ACT V · 阶段 '+ph, title: ph===2?'狂暴化':'终极之力', portrait:4, lines:[
-    { zh: line.zh, speak:true, en: line.en },
-    { zh: ph===2?'克劳迪奥形态骤变，毒箭与障壁横生！':'背景染血，王座厅笼罩在最终的杀意之中——哈姆雷特，用尽你全部的力量！' }
-  ]}], ()=>{ state=STATE.PLAY;
-    if(ph===2){ // 生成障碍毒池
+  showStory([{act:'BOSS · 阶段 '+ph, title:(boss.def.name+' · 狂暴化'), portrait:actIndex, lines}], ()=>{ state=STATE.PLAY;
+    if(boss.kind==='claudius' && ph===2){ // 克劳迪奥二阶段生成障碍毒池
       level.hazards.push({x:boss.x-200,y:GROUND_TOP-4,w:70,h:10,type:'poison'});
       level.hazards.push({x:boss.x+140,y:GROUND_TOP-4,w:70,h:10,type:'poison'});
-      Sound.setMusic(opheliaSaved?'hero':'imperial',1.3);
     }
-    if(ph===3){ Sound.setMusic(opheliaSaved?'hero':'imperial',1.6); }
-    addFloater(boss.x+boss.w/2, boss.y-20, '阶段 '+ph, ph===3?'#ff4040':'#ffb060', 16);
+    if(boss.kind==='claudius'){ Sound.setMusic(opheliaSaved?'hero':'imperial', ph>=3?1.6:1.3); }
+    addFloater(boss.x+boss.w/2, boss.y-20, '阶段 '+ph, ph>=3?'#ff4040':'#ffb060', 16);
   });
 }
 function updateBoss(){
   if(!boss) return;
-  const b=boss;
+  const b=boss, D=b.def;
   if(b.hitFlash>0)b.hitFlash--; if(b.invuln>0)b.invuln--;
   if(b.dead){ b.deathT--; return; }
   const px=player.x+player.w/2, ex=b.x+b.w/2;
@@ -2275,20 +2426,22 @@ function updateBoss(){
   // 移动逼近
   if(b.state!=='dash'){ b.vx += (px<ex?-1:1)* (b.phase>=2?0.14:0.1); b.vx=clamp(b.vx,-(1.3+b.phase*0.3),(1.3+b.phase*0.3)); }
   // 近战
-  if(d<64 && b.atkCd<=0){ b.atkT=22; b.atkCd=70; if(b.phase>=2)b.atkCd=54; }
+  if(d<64 && b.atkCd<=0){ b.atkT=22; b.atkCd = b.phase>=2?54:70; }
   if(b.atkT===10){ const hb=b.facing>0?{x:b.x+b.w,y:b.y,w:52,h:b.h}:{x:b.x-52,y:b.y,w:52,h:b.h}; if(!player.dead&&player.invuln<=0&&rectsOverlap(hb,player)) damagePlayer(b.phase>=3?20:14, ex); }
-  // P1 召唤
-  if(b.phase===1 && b.summonCd<=0 && enemies.length<4){ b.summonCd=260; summonMinions(); }
-  // P2 毒箭
-  if(b.phase===2 && b.poisonCd<=0){ b.poisonCd=110; enemyShootFromBoss('poison'); if(Math.random()<0.5) enemyShootFromBoss('poison'); }
-  if(b.phase>=2 && b.summonCd<=0 && enemies.length<3){ b.summonCd=340; summonMinions(); }
-  // 冲锋（P2/P3）
-  if(b.phase>=2 && b.dashCd<=0 && d>120 && d<360 && b.onGround){ b.state='dash'; b.dashT=24; b.dashCd=200; b.vx=(px<ex?-1:1)*8; addFloater(ex,b.y-16,'冲锋!','#ff8080',13); }
+  // 召唤喽啰（具 summon 能力者）
+  if(D.summon && b.phase===1 && b.summonCd<=0 && enemies.length<4){ b.summonCd=260; summonMinions(); }
+  if(D.summon && b.phase>=2 && b.summonCd<=0 && enemies.length<3){ b.summonCd=340; summonMinions(); }
+  // 远程（具 ranged 能力者，二阶段起）
+  if(D.ranged && b.phase>=2 && b.poisonCd<=0){ b.poisonCd=110; enemyShootFromBoss(D.ranged==='poison'?'poison':'arrow'); if(D.ranged==='dagger' && Math.random()<0.5) enemyShootFromBoss('arrow'); }
+  // 冲锋（具 dash 能力者；三阶段 Boss 二阶段起、其余从一阶段起）
+  const dashPhase = b.phases>=3 ? 2 : 1;
+  if(D.dash && b.phase>=dashPhase && b.dashCd<=0 && d>120 && d<360 && b.onGround){ b.state='dash'; b.dashT=24; b.dashCd=200; b.vx=(px<ex?-1:1)*8; addFloater(ex,b.y-16,'冲锋!','#ff8080',13); }
   if(b.state==='dash'){ b.dashT--; if(b.dashT<=0){ b.state='idle'; b.vx*=0.4; } }
-  // P3 终极技
-  if(b.phase===3 && b.ultCd<=0){ b.ultCd=320; bossUlt(); }
+  // 终极技（具 ult 能力者，三阶段）
+  if(D.ult && b.phase===3 && b.ultCd<=0){ b.ultCd=320; bossUlt(); }
   stepPhysics(b, solids);
-  b.x=clamp(b.x, level.bossArena.x-40, level.width-b.w);
+  const minX=(level.bossArena?level.bossArena.x:0)-40;
+  b.x=clamp(b.x, minX, level.width-b.w);
 }
 function summonMinions(){
   Sound.blip(120,.4,'sawtooth',.3,0,60); shake(4,8);
@@ -2324,15 +2477,59 @@ function updateBossUlt(){
   }
 }
 function onBossDefeated(){
+  const entry=activeBossEntry, kind=boss.kind, D=boss.def;
   boss.dead=true; boss.deathT=120; bossStarted=false;
   Sound.stopMusic(); shake(16,40); flash('rgba(255,255,255,0.5)',20);
   for(let i=0;i<50;i++) burst(boss.x+boss.w/2, boss.y+boss.h*rand(0.1,0.9), i%2?'#e8c25a':'#fff', 1, 5);
   addScore(2000);
   // 清场敌人
   enemies.forEach(e=>{ if(!e.dying) killEnemy(e); });
-  addFloater(boss.x+boss.w/2, boss.y-30, '克劳迪奥伏诛! +2000', '#e8c25a', 18);
-  Sound.jingle(opheliaSaved?'epicwin':'somber');
-  setTimeout(()=>{ startEnding(); }, 1600);
+  if(entry) entry.defeated=true;
+  addFloater(boss.x+boss.w/2, boss.y-30, D.name+' 伏诛! +2000', '#e8c25a', 18);
+
+  if(entry && entry.midboss){          // 终章中段 Boss 雷欧提斯：不结束关卡
+    laertesDefeated=true; Sound.jingle('victory');
+    onLaertesDefeated();
+    return;
+  }
+  if(entry && entry.final){            // 终章最终 Boss 克劳迪奥：进入结局
+    Sound.jingle(opheliaSaved?'epicwin':'somber');
+    setTimeout(()=>{ startEnding(); }, 1600);
+    return;
+  }
+  if(entry && entry.pairFirst){        // 第三幕双人小 Boss 第一人倒下：唤起第二人，不结束关卡
+    Sound.jingle('victory');
+    const nm=D.name;
+    boss=null; activeBossEntry=null;
+    showStory([{act:'ACT III · 双人夹击', title:nm+' 倒下', portrait:2, lines:[
+      { zh:nm+'踉跄倒地——另一名旧友咆哮着拔剑扑来！' },
+      { zh:'哈姆雷特：“一个偿了命，还有一个——一并了结。”', speak:true }
+    ]}], ()=>{ state=STATE.PLAY; addFloater(player.x,player.y-30,'击破一人！迎战下一人','#e8c25a',15); });
+    return;
+  }
+  // 关底 Boss（城堡恶灵先王 / 宫廷小丑 / 英格兰刺客队长）：完成本关
+  Sound.jingle('victory');
+  const clearText = { ghostking:'★ 恶灵先王得以安息 ★', clown:'★ 小丑波洛涅斯伏诛 ★', assassin:'★ 刺客队长授首 ★', guildenstern:'★ 罗森格兰兹与吉尔登斯顿伏诛 ★' }[kind] || (ACTS[actIndex].name+' 完成');
+  activeBossEntry=null;
+  setTimeout(()=>{ completeLevel(clearText); }, 1200);
+}
+// 雷欧提斯（终章中段）被击败：分支后果 —— 救到奥菲莉亚则替挡毒剑，否则中毒倒计时
+function onLaertesDefeated(){
+  const pages = opheliaSaved ? STORY.laertes_saved : STORY.laertes_lost;
+  setTimeout(()=>{
+    showStory(pages, ()=>{
+      state=STATE.PLAY;
+      boss=null; activeBossEntry=null;          // 清除中段 Boss，玩家前进即可触发克劳迪奥
+      if(!opheliaSaved){
+        poisonT = 60*45;                         // 未救到：中毒 45 秒倒计时
+        addFloater(player.x, player.y-34, '☠ 中毒！45 秒内击败克劳迪奥', '#9bff6a', 15);
+        Sound.setMusic('imperial', 1.2);
+      } else {
+        addFloater(player.x, player.y-34, '奥菲莉亚为你挡下了毒剑！', '#ffd0e6', 15);
+        Sound.setMusic('hero', 1.2);
+      }
+    });
+  }, 1000);
 }
 
 /* -------------------------------------------------------------------------
@@ -2376,24 +2573,17 @@ function respawnAtCheckpoint(){
 function checkLevelProgress(){
   // 目标门解锁提示
   if(goalLocked){
-    // 到达终点但未解锁：提示
-    if(player.x>level.goalX-80){
-      hintPulse=1;
-      if(!player.dead) addFloaterThrottled();
-    }
+    if(player.x>level.goalX-80){ hintPulse=1; if(!player.dead) addFloaterThrottled(); }
     return;
   }
-  if(actIndex===3) return; // 湖畔靠救援/超时
+  // 仅"goal"模式关卡（第三幕逃亡）靠抵达终点完成；boss/rescue/finale 由各自逻辑处理
+  if(level.completeMode!=='goal') return;
   if(!goalReached && player.x+player.w > level.goalX){ goalReached=true; completeLevel(); }
 }
 let _lastHint=0;
 function addFloaterThrottled(){
   if(frame-_lastHint<90){ return; } _lastHint=frame;
-  let msg='前路封锁：';
-  if(actIndex===0) msg+='先去触发鬼魂过场！';
-  else if(actIndex===1) msg+='收集全部情报（'+(level.intelGot||0)+'/'+level.intelTotal+'）！';
-  else if(actIndex===2) msg+='先触发戏中戏！';
-  addFloater(player.x+player.w/2, player.y-30, msg, '#ff8a8a', 14);
+  addFloater(player.x+player.w/2, player.y-30, '前路封锁：先触发过场！', '#ff8a8a', 14);
 }
 function levelBonus(){
   const hpBonus=Math.round(player.hp*3);
@@ -2423,25 +2613,29 @@ function rescueOphelia(){
   for(let i=0;i<60;i++){ spawnPetal(player.x+rand(-120,120), player.y-rand(0,120), '#ffd0e6'); }
   for(let i=0;i<30;i++) burst(player.x+rand(-40,40), player.y+rand(-20,40), '#ffe8b0', 1, 3);
   state=STATE.STORY;
-  showStory(STORY.a4_saved, ()=>{ completeLevel('★ 奥菲莉亚得救 ★'); });
+  showStory(STORY.egg_saved, ()=>{ completeLevel('★ 奥菲莉亚得救 ★'); });
 }
 function opheliaLost(){
   opheliaSaved=false;
+  // 亡魂之弓被鬼魂夺走：远程攻击永久失效
+  hasBow=false; bowLost=true; if(player) player.ammo=0;
+  updateBowHintUI(); updateHUD();
   Sound.stopMusic(); Sound.jingle('somber');
   flash('rgba(40,30,70,0.5)',24);
   for(let i=0;i<40;i++) ripple(player.x+rand(-100,100), GROUND_TOP+rand(0,20));
   state=STATE.STORY;
-  showStory(STORY.a4_lost, ()=>{ completeLevel('✝ 奥菲莉亚已逝 ✝'); });
+  showStory(STORY.egg_lost, ()=>{ completeLevel('✝ 奥菲莉亚沉湖 · 亡魂之弓被夺 ✝'); });
 }
 
-// 幕间推进
+// 幕间推进（六段：0城堡→1宫廷→2逃亡→3湖边彩蛋→4英格兰→5终章）
 function proceedAfterClear(){
   hide(dom.levelClearScreen);
   const done=actIndex;
-  if(done===0){ chainStory([STORY.a1_end, STORY.a2_open], ()=>startAct(1)); }
-  else if(done===1){ chainStory([STORY.a3_open], ()=>startAct(2)); }
-  else if(done===2){ chainStory([STORY.a3_end, STORY.a4_open], ()=>startAct(3)); }
-  else if(done===3){ chainStory([ opheliaSaved?STORY.a5_open_saved:STORY.a5_open_lost ], ()=>startAct(4)); }
+  if(done===ACT_CASTLE){ chainStory([STORY.a1_reveal, STORY.a2_open], ()=>startAct(ACT_COURT)); }
+  else if(done===ACT_COURT){ chainStory([STORY.a3_open], ()=>startAct(ACT_ESCAPE)); }
+  else if(done===ACT_ESCAPE){ chainStory([STORY.egg_enter], ()=>startAct(ACT_LAKE)); }
+  else if(done===ACT_LAKE){ chainStory([STORY.a4_open], ()=>startAct(ACT_ENGLAND)); }
+  else if(done===ACT_ENGLAND){ chainStory([STORY.a4_end, opheliaSaved?STORY.a5_open_saved:STORY.a5_open_lost], ()=>startAct(ACT_FINAL)); }
 }
 function chainStory(list, done){
   let i=0;
@@ -2560,24 +2754,44 @@ function updatePlay(){
   updateRocks();
   updatePickups();
   updateTriggersAndCheckpoints();
-  // 湖畔倒计时
-  if(actIndex===3){ level.timeLeft -= 1/60; dom.timer.textContent=Math.max(0,Math.ceil(level.timeLeft));
+  Dialog.update();                 // 非阻断顶部对白栏（不暂停游戏）
+  updatePunkOphelia();             // 第三幕背景疯癫奥菲莉亚
+  // 湖畔彩蛋倒计时
+  if(actIndex===ACT_LAKE){ level.timeLeft -= 1/60; dom.timer.textContent=Math.max(0,Math.ceil(level.timeLeft));
     if(level.rescue && level.rescue.saved){}
     else if(level.timeLeft<=0){ opheliaLost(); return; }
   }
-  // 最终幕 Boss
-  if(actIndex===4){
-    if(!bossStarted && !boss && player.x+player.w > level.bossArena.x + 40){ startBoss(); return; }
-    if(boss){ updateBoss(); updateBossUlt(); }
-    // 阴郁模式环境
-    if(darkMode){ if(frame%40===0){ crows.push({x:camX-30,y:camY+rand(20,120),vx:rand(1.2,2.2),flap:0}); } if(frame%6===0) petals.push({x:camX+rand(0,VW),y:camY-10,vx:rand(-.5,.1),vy:rand(.4,1),rot:rand(0,6.28),vr:.08,size:rand(3,5),color:'#5a4a3a',ph:rand(0,6.28),life:300}); }
+  // 中毒倒计时（终章未救到奥菲莉亚：雷欧提斯毒剑）
+  if(poisonT>0){
+    poisonT--;
+    dom.timer.textContent=Math.max(0,Math.ceil(poisonT/60));
+    if(frame%42===0 && !player.dead){ player.hp-=2; if(player.hp<=0){ player.hp=0; onPlayerDeath(); return; } else { updateHUD(); flash('rgba(120,200,60,0.12)',6); } }
+    if(poisonT<=0 && !player.dead){ damagePlayer(999, player.x); return; }
   }
-  // 第四幕花瓣氛围
-  if(actIndex===3 && frame%20===0) spawnPetal(camX+rand(0,VW), camY-10, '#dfeaf5');
+  // Boss 计划驱动（城堡/宫廷/英格兰关底 + 终章雷欧提斯&克劳迪奥）
+  if(level.bossPlan){ updateBossPlan(); }
+  // 阴郁模式环境（终章失败路线）
+  if(actIndex===ACT_FINAL && darkMode){
+    if(frame%40===0){ crows.push({x:camX-30,y:camY+rand(20,120),vx:rand(1.2,2.2),flap:0}); }
+    if(frame%6===0) petals.push({x:camX+rand(0,VW),y:camY-10,vx:rand(-.5,.1),vy:rand(.4,1),rot:rand(0,6.28),vr:.08,size:rand(3,5),color:'#5a4a3a',ph:rand(0,6.28),life:300});
+  }
+  // 湖畔/英格兰花瓣、海雾氛围
+  if(actIndex===ACT_LAKE && frame%20===0) spawnPetal(camX+rand(0,VW), camY-10, '#dfeaf5');
+  if(actIndex===ACT_ENGLAND && frame%30===0) spawnPetal(camX+rand(0,VW), camY-10, 'rgba(210,225,235,0.6)');
   checkLevelProgress();
   updateCamera();
   if(++hudTick%4===0) updateHUD();
-  // 能量条通过 HUD? 简单用 combo 行右侧无；能量用 boss 条附近绘制在 render
+}
+// 第三幕背景：疯癫朋克奥菲莉亚缓慢游荡 + 疯话
+function updatePunkOphelia(){
+  const po=level.punkOphelia; if(!po) return;
+  po.phase+=0.02;
+  po.x = po.baseX + Math.sin(po.phase)*70;
+  po.lineT--; if(po.lineT<=0){ po.lineT=280;
+    const madLines=['他死了，去了，小姐……','这是三色堇，是为了思念。','明天是圣瓦伦丁节……','他不会回来了吗？'];
+    po.lineI=(po.lineI+1)%madLines.length;
+    if(Math.abs(po.x-player.x)<VW*0.7) addFloater(po.x, GROUND_TOP-90, madLines[po.lineI], '#d6a8e8', 12);
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -2695,15 +2909,18 @@ function drawBossBar(){
   ctx.fillStyle='rgba(8,6,14,0.7)'; ctx.fillRect(bx-4,by-18,bw+8,34);
   ctx.strokeStyle='rgba(232,194,90,0.5)'; ctx.lineWidth=1; ctx.strokeRect(bx-4,by-18,bw+8,34);
   ctx.fillStyle='#c4b98f'; ctx.font='12px "Courier New",serif'; ctx.textAlign='center';
-  ctx.fillText('克劳迪奥 · CLAUDIUS  第 '+boss.phase+' 阶段', W/2, by-6);
+  const label=(boss.def&&boss.def.label)||'BOSS';
+  ctx.fillText(label + (boss.phases>1?('   第 '+boss.phase+' 阶段'):''), W/2, by-6);
   // 底
   ctx.fillStyle='#3a0d0d'; ctx.fillRect(bx,by,bw,10);
   const ratio=clamp(boss.hp/boss.maxHp,0,1);
-  const col = boss.phase===3?'#ff2020':(boss.phase===2?'#ff7040':'#e23b3b');
+  const col = boss.phase>=3?'#ff2020':(boss.phase===2?'#ff7040':'#e23b3b');
   const g=ctx.createLinearGradient(bx,0,bx,by+10); g.addColorStop(0,'#ff9b9b'); g.addColorStop(1,col);
   ctx.fillStyle=g; ctx.fillRect(bx,by,bw*ratio,10);
-  // 阶段分隔线 66% 33%
-  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(bx+bw*0.66,by,2,10); ctx.fillRect(bx+bw*0.33,by,2,10);
+  // 阶段分隔线
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  if(boss.phases>=3){ ctx.fillRect(bx+bw*0.66,by,2,10); ctx.fillRect(bx+bw*0.33,by,2,10); }
+  else if(boss.phases===2){ ctx.fillRect(bx+bw*0.5,by,2,10); }
   ctx.textAlign='left';
 }
 function drawEnergyBar(){
