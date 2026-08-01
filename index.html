@@ -3,42 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>HAMLET · 王子的复仇 — 横版过关</title>
+<title>HAMLET · 王子的复仇 — 五幕横版史诗</title>
 <style>
   :root{ --ink:#f0e9d6; --gold:#e8c25a; --blood:#8b1a1a; }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;background:#07060a;overflow:hidden;font-family:"Courier New",Consolas,monospace;color:var(--ink)}
+  html,body{height:100%;background:#07060a;overflow:hidden;font-family:"Georgia","Songti SC","Courier New",serif;color:var(--ink)}
   #wrap{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 28%,#1a1526,#040307 72%)}
   #stage{position:relative;width:min(96vw,960px);aspect-ratio:16/9;box-shadow:0 0 0 3px #000,0 0 46px rgba(0,0,0,.85),0 0 90px rgba(139,26,26,.22);image-rendering:pixelated}
   canvas{display:block;width:100%;height:100%;background:#0b0812;image-rendering:pixelated;border-radius:2px}
+  .mono{font-family:"Courier New",Consolas,monospace}
 
   /* HUD */
-  #hud{position:absolute;top:0;left:0;right:0;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-size:13px;letter-spacing:.5px;text-shadow:1px 1px 0 #000}
+  #hud{position:absolute;top:0;left:0;right:0;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-size:13px;letter-spacing:.5px;text-shadow:1px 1px 0 #000;font-family:"Courier New",monospace}
   #hud .box{background:rgba(8,6,14,.55);border:1px solid rgba(232,194,90,.4);padding:6px 10px;border-radius:5px;line-height:1.55}
   .hp-track{display:inline-block;width:150px;height:12px;border:1px solid #000;background:#3a0d0d;vertical-align:middle;margin-left:6px;border-radius:2px;overflow:hidden}
   .hp-fill{height:100%;background:linear-gradient(#e23b3b,#8b1a1a);transition:width .12s}
   .oph-fill{background:linear-gradient(#7fd4ee,#2a7fa5)}
   #timer{color:#ff5a5a;font-weight:bold}
-  /* Score panel */
-  #scorePanel{position:absolute;top:8px;right:10px;text-align:right;pointer-events:none;z-index:3}
-  #scoreVal{font-size:30px;font-weight:bold;color:var(--gold);text-shadow:2px 2px 0 #000,0 0 16px rgba(232,194,90,.55);line-height:1;letter-spacing:1px}
+  #ammoRow{color:#c9b6f0}
+  #scorePanel{position:absolute;top:8px;right:10px;text-align:right;pointer-events:none;z-index:3;font-family:"Courier New",monospace}
+  #scoreVal{font-size:30px;font-weight:bold;color:var(--gold);text-shadow:2px 2px 0 #000,0 0 16px rgba(232,194,90,.55);line-height:1}
   #scoreLbl{font-size:11px;color:#c9b98a;letter-spacing:3px}
   #combo{font-size:12px;color:#7fd4ee;height:14px}
   .pop{animation:pop .28s ease}
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.28);color:#fff}100%{transform:scale(1)}}
-  /* Mute btn */
-  #muteBtn{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:7;pointer-events:auto;cursor:pointer;background:rgba(8,6,14,.6);border:1px solid rgba(232,194,90,.5);color:var(--gold);border-radius:6px;padding:4px 10px;font-family:inherit;font-size:13px}
+  #muteBtn{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:7;pointer-events:auto;cursor:pointer;background:rgba(8,6,14,.6);border:1px solid rgba(232,194,90,.5);color:var(--gold);border-radius:6px;padding:4px 10px;font-family:"Courier New",monospace;font-size:13px}
+  /* 持续按键提示条 */
+  #ctrlHint{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);z-index:3;pointer-events:none;font-family:"Courier New",monospace;font-size:12px;background:rgba(8,6,14,.5);border:1px solid rgba(232,194,90,.28);border-radius:20px;padding:4px 14px;color:#c4b98f;white-space:nowrap;display:flex;gap:10px;align-items:center}
+  #ctrlHint .k{display:inline-block;background:#1c1626;border:1px solid #4a4160;border-radius:4px;padding:0 6px;color:#ece6f2;margin-right:3px}
+  #ctrlHint .locked{opacity:.4}
+  #ctrlHint .hot{color:#c9b6f0;text-shadow:0 0 8px rgba(185,139,255,.6)}
 
   /* Overlays */
   .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,4,9,.84);backdrop-filter:blur(2px);padding:18px;z-index:5}
   .overlay.hidden{display:none}
   .title{font-size:clamp(30px,5.4vw,58px);color:var(--gold);letter-spacing:5px;text-shadow:3px 3px 0 #000,0 0 28px rgba(232,194,90,.55);margin-bottom:6px}
   .subtitle{font-size:clamp(13px,1.8vw,18px);color:#c4b98f;margin-bottom:20px;letter-spacing:2px}
-  .quote{font-style:italic;color:#9a94a8;max-width:660px;margin:0 auto 24px;font-size:clamp(12px,1.6vw,15px);line-height:1.75}
-  .btn{pointer-events:auto;cursor:pointer;background:linear-gradient(#e8c25a,#a8842a);color:#1a1206;border:2px solid #000;padding:12px 32px;font-family:inherit;font-size:18px;font-weight:bold;letter-spacing:2px;border-radius:6px;box-shadow:0 4px 0 #5a4415,0 6px 16px rgba(0,0,0,.5);transition:transform .08s,box-shadow .08s}
-  .btn:hover{transform:translateY(-2px);box-shadow:0 6px 0 #5a4415,0 8px 20px rgba(0,0,0,.6)}
-  .btn:active{transform:translateY(2px);box-shadow:0 2px 0 #5a4415}
-  .controls{margin-top:24px;font-size:13px;color:#8a8296;line-height:2}
+  .quote{font-style:italic;color:#9a94a8;max-width:680px;margin:0 auto 24px;font-size:clamp(12px,1.6vw,15px);line-height:1.8}
+  .btn{pointer-events:auto;cursor:pointer;background:linear-gradient(#e8c25a,#a8842a);color:#1a1206;border:2px solid #000;padding:12px 32px;font-family:"Courier New",monospace;font-size:18px;font-weight:bold;letter-spacing:2px;border-radius:6px;box-shadow:0 4px 0 #5a4415,0 6px 16px rgba(0,0,0,.5);transition:transform .08s,box-shadow .08s}
+  .btn:hover{transform:translateY(-2px)} .btn:active{transform:translateY(2px);box-shadow:0 2px 0 #5a4415}
+  .btn.ghost{background:transparent;color:#c4b98f;border:1px solid #6a5f45;box-shadow:none;font-size:14px;padding:8px 18px}
+  .controls{margin-top:24px;font-size:13px;color:#8a8296;line-height:2;font-family:"Courier New",monospace}
   .key{display:inline-block;background:#1c1626;border:1px solid #4a4160;border-bottom-width:3px;border-radius:4px;padding:1px 9px;margin:0 2px;color:#ece6f2;font-size:12px}
   .big{font-size:clamp(34px,6vw,64px)}
   .win{color:#8ee88e;text-shadow:3px 3px 0 #000,0 0 24px rgba(122,214,122,.5)}
@@ -46,14 +51,26 @@
   #levelName{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);text-align:center;font-size:clamp(22px,4vw,42px);color:var(--gold);letter-spacing:6px;text-shadow:3px 3px 0 #000;pointer-events:none;opacity:0;transition:opacity .5s;z-index:4}
   #levelName small{display:block;font-size:.4em;color:#c4b98f;letter-spacing:3px;margin-top:10px}
   .fade{opacity:1 !important}
-  /* score table */
-  .scoreTable{margin:0 auto 22px;font-size:15px;color:#d8d0e0;line-height:2;min-width:280px}
+  .scoreTable{margin:0 auto 22px;font-size:15px;color:#d8d0e0;line-height:2;min-width:300px;font-family:"Courier New",monospace}
   .scoreTable .row{display:flex;justify-content:space-between;gap:40px;border-bottom:1px dashed rgba(232,194,90,.25);padding:2px 4px}
-  .scoreTable .row.total{border-bottom:none;color:var(--gold);font-size:22px;font-weight:bold;margin-top:6px;text-shadow:1px 1px 0 #000}
+  .scoreTable .row.total{border-bottom:none;color:var(--gold);font-size:22px;font-weight:bold;margin-top:6px}
+
+  /* 剧情过场 */
+  #storyScreen{background:rgba(3,2,6,.9)}
+  .storyWrap{max-width:720px;width:92%}
+  #storyAct{font-size:14px;letter-spacing:6px;color:var(--gold);opacity:.8;margin-bottom:10px}
+  #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:26px;text-shadow:2px 2px 0 #000}
+  #storyBody{min-height:200px;text-align:left;font-size:clamp(14px,1.9vw,19px);line-height:2.05;color:#e6dfce}
+  #storyBody .zh{margin:0 0 4px}
+  #storyBody .en{font-style:italic;color:#8f96ab;font-size:.82em;margin:0 0 20px}
+  #storyBody .speak{color:#e8c25a}
+  #storyBody .cursor{display:inline-block;width:9px;background:var(--gold);animation:blink .5s steps(1) infinite;margin-left:2px}
+  @keyframes blink{50%{opacity:0}}
+  .storyFoot{margin-top:26px;display:flex;gap:14px;justify-content:center;align-items:center}
+
   #touch{position:absolute;inset:0;z-index:6;display:none;pointer-events:none}
   #touch .pad{position:absolute;bottom:14px;pointer-events:auto;width:66px;height:66px;border-radius:50%;background:rgba(232,194,90,.18);border:2px solid rgba(232,194,90,.5);display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;user-select:none;-webkit-user-select:none}
-  #tLeft{left:14px}#tRight{left:92px}#tJump{right:92px}#tAtk{right:14px;background:rgba(139,26,26,.28);border-color:rgba(226,59,59,.6)}
-  .hint{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:11px;color:#5a5268;pointer-events:none}
+  #tLeft{left:14px}#tRight{left:92px}#tJump{right:158px}#tAtk{right:82px;background:rgba(139,26,26,.28);border-color:rgba(226,59,59,.6)}#tRanged{right:14px;background:rgba(185,139,255,.22);border-color:rgba(185,139,255,.6)}
 </style>
 </head>
 <body>
@@ -65,70 +82,77 @@
       <div class="box">
         哈姆雷特 <span class="hp-track"><span id="playerHp" class="hp-fill" style="width:100%"></span></span>
         <div id="ophRow" style="display:none">奥菲莉亚 <span class="hp-track"><span id="ophHp" class="hp-fill oph-fill" style="width:100%"></span></span> <span style="color:#7fd4ee">随从</span></div>
-        <div id="ammoRow" style="display:none;margin-top:2px">🏹 亡魂之弓 <span id="ammoVal" style="color:#b98bff;font-weight:bold">8</span>/<span id="ammoMax">8</span> <span id="ammoCd" style="color:#7f8797;font-size:11px"></span></div>
+        <div id="ammoRow" style="display:none;margin-top:2px">🏹 亡魂之弓 <b id="ammoVal">8</b>/<span id="ammoMax">8</span> <span id="ammoCd" style="color:#7f8797;font-size:11px"></span> <span style="color:#8f7fb0;font-size:11px">[F/Z 远程]</span></div>
         <div id="levelLabel" style="margin-top:2px;color:#c4b98f">第一幕</div>
         <div id="timerRow" style="display:none">倒计时 <span id="timer">--</span>s</div>
       </div>
     </div>
 
     <div id="scorePanel" class="hidden">
-      <div id="scoreVal">0</div>
-      <div id="scoreLbl">SCORE</div>
-      <div id="combo"></div>
+      <div id="scoreVal">0</div><div id="scoreLbl">SCORE</div><div id="combo"></div>
     </div>
 
     <button id="muteBtn" class="hidden">🔊 音效开</button>
 
+    <div id="ctrlHint" class="hidden">
+      <span><span class="k">←→</span>移动</span><span><span class="k">↑</span>跳</span><span><span class="k">J</span>攻击</span>
+      <span id="hintRanged" class="locked"><span class="k">F</span>远程<span id="hintLock">(拾取亡魂之弓解锁)</span></span>
+    </div>
+
     <div id="levelName"></div>
+
+    <!-- 剧情过场 -->
+    <div id="storyScreen" class="overlay hidden">
+      <div class="storyWrap">
+        <div id="storyAct"></div>
+        <div id="storyTitle"></div>
+        <div id="storyBody"></div>
+        <div class="storyFoot">
+          <button id="skipBtn" class="btn ghost">跳过 ▸</button>
+          <button id="storyBtn" class="btn">继续</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Title -->
     <div id="titleScreen" class="overlay">
       <div class="title">H A M L E T</div>
-      <div class="subtitle">王 子 的 复 仇 · 横 版 过 关</div>
-      <div class="quote">"生存还是毁灭，这是一个值得考虑的问题。"<br>丹麦王子哈姆雷特得知叔父克劳迪奥弑兄篡位、迎娶其母，誓要复仇。<br>穿越城堡、墓地与湖边，击败克劳迪奥，并在彩蛋关拯救奥菲莉亚。</div>
-      <button class="btn" id="startBtn">开始游戏</button>
+      <div class="subtitle">王 子 的 复 仇 · 五 幕 横 版 史 诗</div>
+      <div class="quote">莎士比亚《哈姆雷特》五幕结构改编。<br>丹麦王子哈姆雷特得知叔父克劳迪奥弑兄篡位，从城堡鬼魂到王座决战，历经装疯、独白、复仇与救赎。<br>“To be, or not to be, that is the question.”</div>
+      <button class="btn" id="startBtn">开始 · 第一幕</button>
       <div class="controls">
-        <span class="key">←</span><span class="key">→</span> / <span class="key">A</span><span class="key">D</span> 移动 &nbsp;·&nbsp;
-        <span class="key">↑</span> / <span class="key">W</span> / <span class="key">空格</span> 跳跃 &nbsp;·&nbsp;
-        <span class="key">J</span> / <span class="key">K</span> 攻击 &nbsp;·&nbsp;
-        <span class="key">F</span> / <span class="key">Z</span> 远程（拾取亡魂之弓后）<br>
-        目标：抵达每关终点旗帜 · 击败守卫得分 · 救奥菲莉亚获大量分 · 终幕击败 Boss 克劳迪奥
+        <span class="key">←→</span>/<span class="key">A</span><span class="key">D</span> 移动 · <span class="key">↑</span>/<span class="key">W</span>/<span class="key">空格</span> 跳 · <span class="key">J</span>/<span class="key">K</span> 攻击 · <span class="key">F</span>/<span class="key">Z</span> 远程（拾取亡魂之弓后）
       </div>
     </div>
 
     <!-- Level complete -->
     <div id="levelClearScreen" class="overlay hidden">
-      <div class="title win big">过 关！</div>
+      <div class="title win big">过 关</div>
       <div class="subtitle" id="clearText"></div>
       <div class="scoreTable" id="clearScore"></div>
-      <button class="btn" id="nextBtn">进入下一幕</button>
+      <button class="btn" id="nextBtn">继续</button>
     </div>
 
     <!-- Win -->
     <div id="winScreen" class="overlay hidden">
-      <div class="title win big">通 关</div>
-      <div class="subtitle">复仇已成 · 奥菲莉亚获救</div>
+      <div class="title win big">终 · 复仇成</div>
       <div class="quote" id="winQuote"></div>
       <div class="scoreTable" id="winScore"></div>
-      <button class="btn" id="restartWinBtn">再玩一次</button>
+      <button class="btn" id="restartWinBtn">再演一遍</button>
     </div>
 
     <!-- Lose -->
     <div id="loseScreen" class="overlay hidden">
       <div class="title lose big" id="loseTitle">殒 命</div>
-      <div class="quote" id="loseText">"其余的，只是沉默。" 哈姆雷特倒下了。</div>
+      <div class="quote" id="loseText">“其余的，只是沉默。” 哈姆雷特倒下了。</div>
       <div class="subtitle" id="loseScore" style="color:var(--gold)"></div>
-      <button class="btn" id="restartBtn">重新挑战本关</button>
+      <button class="btn" id="restartBtn">重演本幕</button>
     </div>
 
-    <!-- Touch controls -->
     <div id="touch">
-      <div id="tLeft" class="pad">◀</div>
-      <div id="tRight" class="pad">▶</div>
-      <div id="tJump" class="pad">⤒</div>
-      <div id="tAtk" class="pad">⚔</div>
+      <div id="tLeft" class="pad">◀</div><div id="tRight" class="pad">▶</div>
+      <div id="tJump" class="pad">⤒</div><div id="tAtk" class="pad">⚔</div><div id="tRanged" class="pad">🏹</div>
     </div>
-    <div class="hint">HTML5 Canvas · 纯前端 · 无外部引擎 · Web Audio 合成音效</div>
   </div>
 </div>
 <script src="game.js"></script>
