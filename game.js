@@ -286,6 +286,7 @@ const dom = {
   scorePanel:$('scorePanel'), scoreVal:$('scoreVal'), combo:$('combo'),
   muteBtn:$('muteBtn'), ctrlHint:$('ctrlHint'), hintRanged:$('hintRanged'), hintLock:$('hintLock'),
   levelName:$('levelName'),
+  dlgBar:$('dlgBar'), dlgLeft:$('dlgLeft'), dlgRight:$('dlgRight'),
   storyScreen:$('storyScreen'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'),
   skipBtn:$('skipBtn'), storyBtn:$('storyBtn'),
   titleScreen:$('titleScreen'), startBtn:$('startBtn'),
@@ -1819,21 +1820,42 @@ const BOSS_PHASE_LINES = {
 // 非阻断顶部对白栏 · 各段实时台词（left=哈姆雷特，right=登场角色）
 function DL(side,name,zh,en){ return {side,name,zh,en:en||''}; }
 const CHATTER = {
-  0:[ DL('left','哈姆雷特','这城堡的每一块石头，都记得我父亲的脚步。'),
-      DL('right','守卫','站住！深夜的城墙不容闲人。','Who goes there?'),
-      DL('left','哈姆雷特','闲人？我才是这里名正言顺的主人。') ],
+  // 第一幕 城堡：霍拉旭、马塞勒斯/伯纳多、先王鬼魂、克劳迪奥（远景）
+  0:[ DL('right','马塞勒斯','丹麦国里，一定有些不可告人的坏事。','Something is rotten in the state of Denmark.'),
+      DL('left','哈姆雷特','这城堡的每一块石头，都记得我父亲的脚步。'),
+      DL('right','霍拉旭','殿下，那鬼魂昨夜又一次出现了。','My lord, I think I saw him yesternight.'),
+      DL('left','哈姆雷特','若他今夜再来，纵是地狱裂口，我也要与他说话。','If it assume my noble father\'s person, I\'ll speak to it.'),
+      DL('right','鬼魂 · 先王','为我复仇——莫让丹麦的御榻沦为荒淫的温床。','Revenge his foul and most unnatural murder.'),
+      DL('left','哈姆雷特','说吧，我已备好双翼，飞去复仇。','Haste me to know\'t, that I may sweep to my revenge.') ],
+  // 第二幕 宫廷：奥菲莉亚、波洛涅斯、乔特鲁德、克劳迪奥（远景）
   1:[ DL('right','奥菲莉亚','殿下，我把您的信都退回来了……','I did repel his letters.'),
       DL('left','哈姆雷特','进尼姑庵去吧——别做罪人的母亲。','Get thee to a nunnery.'),
-      DL('right','波洛涅斯','（低语）他疯了，可疯里有条理。','Though this be madness…') ],
+      DL('right','波洛涅斯','（低语）他疯了，可疯里自有条理。','Though this be madness, yet there is method in\'t.'),
+      DL('right','乔特鲁德','哈姆雷特，你已大大触怒了你的父亲。','Hamlet, thou hast thy father much offended.'),
+      DL('left','哈姆雷特','母亲，是您大大触怒了我的父亲。','Mother, you have my father much offended.'),
+      DL('right','克劳迪奥（远景）','显贵人的疯病，是不能不加提防的。','Madness in great ones must not unwatch\'d go.') ],
+  // 第三幕 逃亡：疯奥菲莉亚、罗森格兰兹/吉尔登斯顿、霍拉旭、克劳迪奥爪牙
   2:[ DL('right','奥菲莉亚（疯）','这是迷迭香，是为了记忆……','There\'s rosemary, that\'s for remembrance.'),
       DL('left','哈姆雷特','她的疯，比这满朝的清醒更叫人心碎。'),
-      DL('right','奥菲莉亚（疯）','他不会回来了吗？他不会回来了吗？','And will he not come again?') ],
+      DL('right','罗森格兰兹','殿下，国王差我们来，请您交出尸体。','My lord, you must tell us where the body is.'),
+      DL('left','哈姆雷特','你们把我当海绵？国王榨干时，你们终将一无所有。','He keeps them, like an ape, in the corner of his jaw.'),
+      DL('right','奥菲莉亚（疯）','他不会回来了吗？他不会回来了吗？','And will he not come again?'),
+      DL('right','霍拉旭','殿下当心，克劳迪奥的爪牙就在身后！') ],
+  // 彩蛋关 湖边：哈姆雷特、疯奥菲莉亚
   3:[ DL('left','哈姆雷特','撑住！我这就来——别沉下去！'),
-      DL('right','奥菲莉亚（疯）','花环好美……水好凉……','Come, my coach!') ],
+      DL('right','奥菲莉亚（疯）','花环好美……水好凉……','Come, my coach! Good night, ladies.'),
+      DL('left','哈姆雷特','别让柳枝折断——把手给我！') ],
+  // 第四幕 英格兰：英格兰使者/海盗、刺客队长、雷欧提斯（过场预告）
   4:[ DL('left','哈姆雷特','这封催命的信，如今要了他们自己的命。'),
-      DL('right','刺客','丹麦王的金子，可不容易赚啊。'),
-      DL('left','哈姆雷特','海风也知道，我不会死在这异乡。') ],
-  5:[ DL('left','哈姆雷特','是时候了。让这一切，有个了结。'),
+      DL('right','英格兰使者','丹麦来的贵客，这风浪可还受得住？'),
+      DL('right','刺客队长','丹麦王的金子，可不容易赚啊。'),
+      DL('left','哈姆雷特','海风也知道，我不会死在这异乡。'),
+      DL('right','雷欧提斯（预告）','等着我，杀我父者——丹麦见分晓。') ],
+  // 第五幕 终章：霍拉旭、掘墓人、乔特鲁德、雷欧提斯、克劳迪奥
+  5:[ DL('left','哈姆雷特','生存还是毁灭，这是个问题。','To be, or not to be, that is the question.'),
+      DL('right','掘墓人','我造的坟墓比房子还结实，能住到末日审判。','The houses he makes last till doomsday.'),
+      DL('left','哈姆雷特','可怜的约里克！我认得他，霍拉旭。','Alas, poor Yorick! I knew him, Horatio.'),
+      DL('right','乔特鲁德','（举杯）我为你的胜利干杯，哈姆雷特。','The queen carouses to thy fortune, Hamlet.'),
       DL('right','霍拉旭','殿下，若您倒下，我愿讲述您的故事。','I am more an antique Roman than a Dane.') ]
 };
 
@@ -1854,22 +1876,25 @@ let activeBossEntry=null;            // 当前激活的 Boss 计划条目
    非阻断式顶部对白栏（不切出 PLAY 状态，不暂停游戏，自动推进）
    ------------------------------------------------------------------------- */
 const Dialog = {
-  queue:[], cur:null, hold:0, gap:0,
-  push(lines){ (lines||[]).forEach(l=>this.queue.push(l)); },
-  clear(){ this.queue=[]; this.cur=null; this.hold=0; this.gap=0; this._hideBoth(); },
+  queue:[], src:[], cur:null, hold:0, gap:0, loop:true,
+  push(lines){ (lines||[]).forEach(l=>{ this.queue.push(l); this.src.push(l); }); },
+  clear(){ this.queue=[]; this.src=[]; this.cur=null; this.hold=0; this.gap=0; this._hideBoth(); },
   _hideBoth(){ if(dom.dlgLeft){ dom.dlgLeft.classList.remove('show'); dom.dlgRight.classList.remove('show'); } },
   _fill(el,l){ if(!el) return; el.querySelector('.who').textContent=l.name; el.querySelector('.zh').textContent=l.zh; el.querySelector('.en').textContent=l.en||''; },
   update(){
     if(!dom.dlgLeft) return;
-    if(this.hold>0){ this.hold--; if(this.hold===0){ (this.cur.side==='left'?dom.dlgLeft:dom.dlgRight).classList.remove('show'); this.gap=20; } return; }
+    if(this.hold>0){ this.hold--; if(this.hold===0){ (this.cur.side==='left'?dom.dlgLeft:dom.dlgRight).classList.remove('show'); this.gap=26; } return; }
     if(this.gap>0){ this.gap--; return; }
-    if(this.queue.length){
-      const l=this.queue.shift(); this.cur=l;
-      const el = l.side==='left'?dom.dlgLeft:dom.dlgRight;
-      (l.side==='left'?dom.dlgRight:dom.dlgLeft).classList.remove('show');
-      this._fill(el,l); el.classList.add('show');
-      this.hold = 150 + Math.min(180, l.zh.length*5);
+    if(!this.queue.length){
+      // 循环播放本段台词，使顶部对白栏贯穿整关始终常驻（间隔一段静默）
+      if(this.loop && this.src.length){ this.queue=this.src.slice(); this.gap=340; }
+      return;
     }
+    const l=this.queue.shift(); this.cur=l;
+    const el = l.side==='left'?dom.dlgLeft:dom.dlgRight;
+    (l.side==='left'?dom.dlgRight:dom.dlgLeft).classList.remove('show');
+    this._fill(el,l); el.classList.add('show');
+    this.hold = 150 + Math.min(180, l.zh.length*5);
   }
 };
 
@@ -1919,6 +1944,13 @@ function loadLevel(idx, keepScore){
   goalLocked=false;
   // 非阻断顶部对白栏：清空并压入本段开场台词
   Dialog.clear(); if(CHATTER[idx]) Dialog.push(CHATTER[idx]);
+  // 分支相关的登场角色台词：终章若奥菲莉亚生还，她随侍在侧
+  if(idx===ACT_FINAL && opheliaSaved){
+    Dialog.push([ DL('right','奥菲莉亚','我在你身边，我的殿下——这一次，我不会离开。'),
+      DL('left','哈姆雷特','有你在，纵是毒剑，也伤不到我的心。') ]);
+  } else if(idx===ACT_FINAL && !opheliaSaved){
+    Dialog.push([ DL('right','奥菲莉亚 · 亡魂','（湖底的歌声）他不会回来了吗……','He will not come again.') ]);
+  }
   // HUD
   dom.levelLabel.textContent = ACTS[idx].name;
   dom.timerRow.style.display = (idx===ACT_LAKE)?'block':'none';
@@ -3026,7 +3058,7 @@ function startGame(){
   score=0; comboCount=0; comboTimer=0; stats={time:0,kills:0,boxes:0,secrets:0};
   opheliaSaved=true; hasBow=false; darkMode=false;
   dom.scoreVal.textContent='0';
-  show(dom.hud); show(dom.scorePanel); show(dom.muteBtn); show(dom.ctrlHint);
+  show(dom.hud); show(dom.scorePanel); show(dom.muteBtn); show(dom.ctrlHint); show(dom.dlgBar);
   hideAllOverlays();
   actIndex=0;
   camX=0; camY=0;
