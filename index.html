@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>HAMLET · 王子的复仇 — 横版过关</title>
+<style>
+  :root{
+    --ink:#e8e2d0; --gold:#d4af37; --blood:#8b1a1a; --stone:#2b2f3a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#0b0d12;overflow:hidden;font-family:"Courier New",Consolas,monospace;color:var(--ink)}
+  #wrap{position:relative;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 30%,#1a1f2e,#05070c 70%)}
+  #stage{position:relative;width:min(96vw,960px);aspect-ratio:16/9;box-shadow:0 0 0 3px #000,0 0 40px rgba(0,0,0,.8),0 0 80px rgba(139,26,26,.25);image-rendering:pixelated}
+  canvas{display:block;width:100%;height:100%;background:#0e1220;image-rendering:pixelated;border-radius:2px}
+
+  /* HUD */
+  #hud{position:absolute;top:0;left:0;right:0;padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-size:14px;letter-spacing:.5px;text-shadow:1px 1px 0 #000}
+  #hud .box{background:rgba(6,8,14,.55);border:1px solid rgba(212,175,55,.4);padding:6px 10px;border-radius:4px;line-height:1.5}
+  .hp-track{display:inline-block;width:150px;height:12px;border:1px solid #000;background:#3a0d0d;vertical-align:middle;margin-left:6px;border-radius:2px;overflow:hidden}
+  .hp-fill{height:100%;background:linear-gradient(#e23b3b,#8b1a1a);transition:width .12s}
+  .oph-fill{background:linear-gradient(#5bc0de,#2a7fa5)}
+  #timer{color:#ff5a5a;font-weight:bold}
+
+  /* Overlays */
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(4,6,11,.82);backdrop-filter:blur(2px);padding:20px;z-index:5}
+  .overlay.hidden{display:none}
+  .title{font-size:clamp(28px,5vw,54px);color:var(--gold);letter-spacing:4px;text-shadow:3px 3px 0 #000,0 0 24px rgba(212,175,55,.5);margin-bottom:6px}
+  .subtitle{font-size:clamp(13px,1.8vw,18px);color:#b9c0d0;margin-bottom:22px;letter-spacing:2px}
+  .quote{font-style:italic;color:#8b93a7;max-width:640px;margin:0 auto 26px;font-size:clamp(12px,1.6vw,15px);line-height:1.7}
+  .btn{pointer-events:auto;cursor:pointer;background:linear-gradient(#d4af37,#a8842a);color:#1a1206;border:2px solid #000;padding:12px 30px;font-family:inherit;font-size:18px;font-weight:bold;letter-spacing:2px;border-radius:6px;box-shadow:0 4px 0 #5a4415,0 6px 16px rgba(0,0,0,.5);transition:transform .08s,box-shadow .08s;text-transform:uppercase}
+  .btn:hover{transform:translateY(-2px);box-shadow:0 6px 0 #5a4415,0 8px 20px rgba(0,0,0,.6)}
+  .btn:active{transform:translateY(2px);box-shadow:0 2px 0 #5a4415}
+  .controls{margin-top:26px;font-size:13px;color:#7f879a;line-height:2}
+  .key{display:inline-block;background:#1c2130;border:1px solid #444c63;border-bottom-width:3px;border-radius:4px;padding:1px 9px;margin:0 2px;color:#dfe4ef;font-size:12px}
+  .big{font-size:clamp(34px,6vw,64px)}
+  .win{color:#7ad67a;text-shadow:3px 3px 0 #000,0 0 24px rgba(122,214,122,.5)}
+  .lose{color:#e23b3b;text-shadow:3px 3px 0 #000,0 0 24px rgba(226,59,59,.5)}
+  #levelName{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);text-align:center;font-size:clamp(22px,4vw,42px);color:var(--gold);letter-spacing:6px;text-shadow:3px 3px 0 #000;pointer-events:none;opacity:0;transition:opacity .5s;z-index:4}
+  #levelName small{display:block;font-size:.4em;color:#b9c0d0;letter-spacing:3px;margin-top:10px}
+  .fade{opacity:1 !important}
+  #touch{position:absolute;inset:0;z-index:6;display:none;pointer-events:none}
+  #touch .pad{position:absolute;bottom:14px;pointer-events:auto;width:64px;height:64px;border-radius:50%;background:rgba(212,175,55,.18);border:2px solid rgba(212,175,55,.5);display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;user-select:none;-webkit-user-select:none}
+  #tLeft{left:14px}#tRight{left:90px}#tJump{right:90px}#tAtk{right:14px;background:rgba(139,26,26,.28);border-color:rgba(226,59,59,.6)}
+  .hint{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:11px;color:#5a6172;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <div id="hud" class="hidden">
+      <div class="box">
+        哈姆雷特 <span class="hp-track"><span id="playerHp" class="hp-fill" style="width:100%"></span></span>
+        <div id="ophRow" style="display:none">奥菲莉亚 <span class="hp-track"><span id="ophHp" class="hp-fill oph-fill" style="width:100%"></span></span> <span style="color:#5bc0de">随从</span></div>
+      </div>
+      <div class="box" style="text-align:right">
+        <span id="levelLabel">第一幕</span><br>
+        <span id="scoreLabel">击败 0</span>
+        <div id="timerRow" style="display:none">倒计时 <span id="timer">--</span>s</div>
+      </div>
+    </div>
+
+    <div id="levelName"></div>
+
+    <!-- Title -->
+    <div id="titleScreen" class="overlay">
+      <div class="title">H A M L E T</div>
+      <div class="subtitle">王 子 的 复 仇 · 横 版 过 关</div>
+      <div class="quote">"生存还是毁灭，这是一个值得考虑的问题。"<br>—— 丹麦王子哈姆雷特得知叔父克劳迪奥弑兄篡位、迎娶其母，誓要复仇。<br>穿越城堡、墓地与湖边，击败克劳迪奥，并在彩蛋关拯救奥菲莉亚。</div>
+      <button class="btn" id="startBtn">开始游戏</button>
+      <div class="controls">
+        <span class="key">←</span><span class="key">→</span> / <span class="key">A</span><span class="key">D</span> 移动 &nbsp;·&nbsp;
+        <span class="key">↑</span> / <span class="key">W</span> / <span class="key">空格</span> 跳跃 &nbsp;·&nbsp;
+        <span class="key">J</span> / <span class="key">K</span> 攻击<br>
+        目标：抵达每关终点的旗帜；击败沿途守卫；最终击败 Boss 克劳迪奥
+      </div>
+    </div>
+
+    <!-- Level complete -->
+    <div id="levelClearScreen" class="overlay hidden">
+      <div class="title win big">过 关！</div>
+      <div class="subtitle" id="clearText"></div>
+      <button class="btn" id="nextBtn">进入下一幕</button>
+    </div>
+
+    <!-- Win -->
+    <div id="winScreen" class="overlay hidden">
+      <div class="title win big">通 关</div>
+      <div class="subtitle">复仇已成 · 奥菲莉亚获救</div>
+      <div class="quote" id="winQuote"></div>
+      <button class="btn" id="restartWinBtn">再玩一次</button>
+    </div>
+
+    <!-- Lose -->
+    <div id="loseScreen" class="overlay hidden">
+      <div class="title lose big" id="loseTitle">殒 命</div>
+      <div class="quote" id="loseText">"其余的，只是沉默。" 哈姆雷特倒下了。</div>
+      <button class="btn" id="restartBtn">重新挑战本关</button>
+    </div>
+
+    <!-- Touch controls -->
+    <div id="touch">
+      <div id="tLeft" class="pad">◀</div>
+      <div id="tRight" class="pad">▶</div>
+      <div id="tJump" class="pad">⤒</div>
+      <div id="tAtk" class="pad">⚔</div>
+    </div>
+    <div class="hint">HTML5 Canvas · 纯前端 · 无外部引擎</div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
