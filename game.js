@@ -1265,17 +1265,15 @@ function buildStandard(cfg){
   }
   return lv;
 }
-function addCastleSpikeCrossingAids(lv){
-  const spikePits = lv.hazards.filter(h=>h.type==='spike' && h.w>=110);
-  for(const pit of spikePits){
-    const hasBridge = lv.platforms.some(p=>p.x < pit.x + pit.w && p.x + p.w > pit.x && p.y < GROUND_TOP - 40 && p.y > GROUND_TOP - 150);
-    if(hasBridge) continue;
-    lv.movers.push({
-      x:pit.x + pit.w/2 - 36, y:GROUND_TOP-92, w:72, h:14, type:'plat',
-      axis:'x', range:Math.min(70, Math.max(36, pit.w/2)), speed:0.75, phase:0,
-      baseX:pit.x + pit.w/2 - 36, baseY:GROUND_TOP-92
-    });
-  }
+function fixCastlePreCheckpointSpikeTrap(lv){
+  const firstCheckpointX = lv.checkpoints[0] ? lv.checkpoints[0].x : lv.width / 3;
+  const trap = lv.hazards.find(h=>h.type==='spike' && h.x < firstCheckpointX);
+  if(!trap) return;
+  lv.movers.push({
+    x:trap.x + trap.w / 2 - 42, y:GROUND_TOP - 96, w:84, h:14, type:'plat',
+    axis:'x', range:54, speed:0.72, phase:0,
+    baseX:trap.x + trap.w / 2 - 42, baseY:GROUND_TOP - 96
+  });
 }
 
 function pickEnemyType(cfg, rng, seg){
@@ -1310,7 +1308,7 @@ function buildAct(idx){
     lv=buildStandard({seed:101, width:5200, enemies:['patrol','archer','shield'], enemyChance:0.5, pitBase:0.1, pitHazard:'spike'});
     lv.triggers.push({x:lv.width*0.42, y:GROUND_TOP-120, w:80, h:120, type:'ghost', fired:false, key:'ghost'});
     lv.segments=[{x:0,name:'城墙入口'},{x:lv.width/3,name:'守卫哨塔'},{x:lv.width*2/3,name:'鬼魂之墙'}];
-    addCastleSpikeCrossingAids(lv);
+    fixCastlePreCheckpointSpikeTrap(lv);
     appendBossArena(lv,'ghostking',{completesLevel:true});
   } else if(idx===ACT_COURT){ // 第二幕 宫廷 —— 前段拾取亡魂之弓；关底 Boss：小丑波洛涅斯
     lv=buildStandard({seed:202, width:5600, enemies:['patrol','archer','shield'], enemyChance:0.55, pitBase:0.12, pitHazard:'spike'});
