@@ -3240,12 +3240,14 @@ function opheliaLost(){
 // 幕间推进（六段：0城堡→1宫廷→2逃亡→3湖边彩蛋→4英格兰→5终章）
 function proceedAfterClear(){
   hide(dom.levelClearScreen);
-  const done=actIndex;
-  if(done===ACT_CASTLE){ chainStory([STORY.a1_reveal, STORY.a2_open], ()=>startAct(ACT_COURT)); }
-  else if(done===ACT_COURT){ chainStory([STORY.a3_open], ()=>startAct(ACT_ESCAPE)); }
-  else if(done===ACT_ESCAPE){ chainStory([STORY.egg_enter], ()=>startAct(ACT_LAKE)); }
-  else if(done===ACT_LAKE){ chainStory([STORY.a4_open], ()=>startAct(ACT_ENGLAND)); }
-  else if(done===ACT_ENGLAND){ chainStory([STORY.a4_end, opheliaSaved?STORY.a5_open_saved:STORY.a5_open_lost], ()=>startAct(ACT_FINAL)); }
+  runSceneFade(()=>{
+    const done=actIndex;
+    if(done===ACT_CASTLE){ chainStory([STORY.a1_reveal, STORY.a2_open], ()=>startAct(ACT_COURT)); }
+    else if(done===ACT_COURT){ chainStory([STORY.a3_open], ()=>startAct(ACT_ESCAPE)); }
+    else if(done===ACT_ESCAPE){ chainStory([STORY.egg_enter], ()=>startAct(ACT_LAKE)); }
+    else if(done===ACT_LAKE){ chainStory([STORY.a4_open], ()=>startAct(ACT_ENGLAND)); }
+    else if(done===ACT_ENGLAND){ chainStory([STORY.a4_end, opheliaSaved?STORY.a5_open_saved:STORY.a5_open_lost], ()=>startAct(ACT_FINAL)); }
+  });
 }
 function chainStory(list, done){
   let i=0;
@@ -3253,10 +3255,12 @@ function chainStory(list, done){
   next();
 }
 function startAct(idx){
-  loadLevel(idx, true);
-  camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
-  state=STATE.PLAY;
-  showLevelName(ACTS[idx].name, ACTS[idx].en);
+  runSceneFade(()=>{
+    loadLevel(idx, true);
+    camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
+    state=STATE.PLAY; clearInputEdges();
+    showLevelName(ACTS[idx].name, ACTS[idx].en);
+  });
 }
 function showLevelName(name, en){
   dom.levelName.innerHTML=name+'<small>'+en+'</small>';
