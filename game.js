@@ -299,7 +299,9 @@ const dom = {
   titleScreen:$('titleScreen'), startBtn:$('startBtn'),
   levelClearScreen:$('levelClearScreen'), clearText:$('clearText'), clearScore:$('clearScore'), nextBtn:$('nextBtn'),
   winScreen:$('winScreen'), winQuote:$('winQuote'), winScore:$('winScore'), restartWinBtn:$('restartWinBtn'),
-  loseScreen:$('loseScreen'), loseTitle:$('loseTitle'), loseText:$('loseText'), loseScore:$('loseScore'), restartBtn:$('restartBtn')
+  loseScreen:$('loseScreen'), loseTitle:$('loseTitle'), loseText:$('loseText'), loseScore:$('loseScore'), restartBtn:$('restartBtn'),
+  messageBoard:$('messageBoard'), messageTitle:$('messageTitle'), messagePrompt:$('messagePrompt'), messageInput:$('messageInput'),
+  messageCount:$('messageCount'), messageError:$('messageError'), messageSubmitBtn:$('messageSubmitBtn'), messageCloseBtn:$('messageCloseBtn'), messageList:$('messageList')
 };
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
@@ -482,7 +484,7 @@ const ACTS = [
     theme:{ sky:['#2a2338','#221b30','#120c1a'], far:'#2a2440', mid:'#3a3052', moon:false, fog:0.04,
       drawFar:(bx,gh)=>silhouettePalace(bx,gh), drawMid:(bx,gh)=>silhouetteColumns(bx,gh) },
     ground:'#4a3d5c', groundTop:'#6a5a80', accent:'#d8b8f0' },
-  { name:'第三幕 · 逃亡', en:'ACT III — The Flight', music:'escape',
+  { name:'第三幕 · 疯狂的恋人', en:'ACT III — The Mad Lovers', music:'escape',
     theme:{ sky:['#20182a','#181020','#0a0610'], far:'#1c1526', mid:'#2a2038', moon:true, fog:0.07,
       drawFar:(bx,gh)=>silhouetteRooftops(bx,gh), drawMid:(bx,gh)=>silhouetteDeadTrees(bx,gh) },
     ground:'#33283e', groundTop:'#4a3a5a', accent:'#c9a6ff' },
@@ -1177,6 +1179,13 @@ function drawTrigger(tr){
     // 花瓣环绕
     if(frame%12===0) spawnPetal(tr.x+tr.w/2+rand(-14,14), oy-4, '#ffd0e6');
     ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(tr.x+tr.w/2,oy+4,14+Math.sin(frame*0.1)*3,0,6.283);ctx.stroke();
+  } else if(tr.type==='bonusEntrance'){
+    const a=0.28+0.22*Math.sin(frame*0.09);
+    ctx.fillStyle='rgba(232,194,90,'+a+')'; ctx.fillRect(tr.x,tr.y,tr.w,tr.h);
+    ctx.strokeStyle='rgba(255,235,160,0.8)'; ctx.lineWidth=2; ctx.strokeRect(tr.x,tr.y,tr.w,tr.h);
+    ctx.fillStyle='#fff2b0'; ctx.font='bold 12px "Courier New",monospace'; ctx.textAlign='center';
+    ctx.fillText(tr.bonusAct===3 ? "→ Monica's Test（可选）" : '→ 隐藏挑战（可选）', tr.x+tr.w/2, tr.y-8);
+    ctx.fillStyle='#1a1206'; ctx.font='18px serif'; ctx.fillText('★', tr.x+tr.w/2, tr.y+tr.h/2+6);
   }
 }
 function drawBowPickup(bp){
@@ -1491,6 +1500,7 @@ function buildAct(idx){
     lv=buildAct5();
   }
   ensureTraversable(lv);          // 通行性保障：确保任何地刺/坑洞段都有可跳过的落脚点
+  if(idx!==ACT_LAKE) createBonusEntrance(lv, idx);
   lv.secretTotal = lv.chests.length;
   return lv;
 }
@@ -1900,6 +1910,76 @@ let midFired={};                     // 已触发的过场 key
 let hintPulse=0;
 let bowHintT=0;                      // 拾弓提示条常驻计时（帧）
 let activeBossEntry=null;            // 当前激活的 Boss 计划条目
+let bonusLevel=null;                 // 趣味支线状态：与 actIndex/currentAct 隔离
+let bonusReturn=null;                // 进入趣味关前的回档点
+let bonusBoardAct=0;
+
+const BONUS_TITLES = ['登高挑战','宫廷回廊',"Monica's Test",'英格兰迷宫','决战前的独白'];
+function messageWidth(text){
+  let width=0;
+  for(const ch of text){ width += ch.charCodeAt(0)>127 ? 2 : 1; }
+  return width;
+}
+function clampMessageInput(text){
+  let out='', width=0, ascii=0, wide=0;
+  for(const ch of text){
+    const isWide = ch.charCodeAt(0)>127;
+    const add = isWide ? 2 : 1;
+    if(width + add > 20) break;
+    if(isWide){ if(wide>=10) break; wide++; }
+    else { if(ascii>=15) break; ascii++; }
+    out += ch; width += add;
+  }
+  return out;
+}
+function messageStorageKey(act){ return 'hamlet_messages_act'+act; }
+function messageThrottleKey(act){ return 'hamlet_message_last_act'+act; }
+function getMessages(act){
+  try { return JSON.parse(localStorage.getItem(messageStorageKey(act))||'[]').filter(v=>typeof v==='string'); }
+  catch(e){ return []; }
+}
+function setMessages(act, messages){ localStorage.setItem(messageStorageKey(act), JSON.stringify(messages.slice(-30))); }
+function renderMessageList(act){
+  if(!dom.messageList) return;
+  dom.messageList.textContent='';
+  const messages=getMessages(act);
+  if(!messages.length){ const empty=document.createElement('div'); empty.className='msg'; empty.textContent='暂无留言，成为第一个记录者。'; dom.messageList.appendChild(empty); return; }
+  messages.slice().reverse().forEach(msg=>{ const item=document.createElement('div'); item.className='msg'; item.textContent=msg; dom.messageList.appendChild(item); });
+}
+function updateMessageMeta(){
+  if(!dom.messageInput) return;
+  const clamped=clampMessageInput(dom.messageInput.value);
+  if(clamped!==dom.messageInput.value) dom.messageInput.value=clamped;
+  dom.messageCount.textContent='宽度 '+messageWidth(dom.messageInput.value)+'/20（ASCII≤15，中文≤10）';
+  dom.messageError.textContent='';
+}
+function openMessageBoard(act, title, promptText){
+  bonusBoardAct=act;
+  state='messageBoard';
+  dom.messageTitle.textContent=title;
+  dom.messagePrompt.textContent=promptText;
+  dom.messageInput.value='';
+  updateMessageMeta();
+  renderMessageList(act);
+  hideAllOverlays(); show(dom.messageBoard);
+}
+function submitMessage(){
+  const act=bonusBoardAct;
+  const text=clampMessageInput((dom.messageInput.value||'').trim());
+  const now=Date.now();
+  const last=Number(localStorage.getItem(messageThrottleKey(act))||0);
+  if(!text){ dom.messageError.textContent='留言不能为空'; return; }
+  if(now-last<5*60*1000){ dom.messageError.textContent='同一浏览器每关每5分钟限提交1条'; return; }
+  const messages=getMessages(act); messages.push(text); setMessages(act,messages);
+  localStorage.setItem(messageThrottleKey(act), String(now));
+  dom.messageInput.value=''; updateMessageMeta(); renderMessageList(act);
+  dom.messageError.textContent='已保存到本地留言板';
+}
+function closeMessageBoard(){
+  hide(dom.messageBoard);
+  if(bonusLevel) exitBonus(true);
+  else state=STATE.PLAY;
+}
 
 /* -------------------------------------------------------------------------
    非阻断式顶部对白栏（不切出 PLAY 状态，不暂停游戏，自动推进）
@@ -1926,6 +2006,62 @@ const Dialog = {
     this.hold = 150 + Math.min(180, l.zh.length*5);
   }
 };
+
+function buildBonusLevel(bonusAct){
+  const n=bonusAct;
+  const lv={ width:1800, height:LEVEL_H, groundTop:GROUND_TOP,
+    platforms:[], hazards:[], movers:[], breakables:[], chests:[], enemySpawns:[], checkpoints:[], triggers:[], pickups:[], rockEmitters:[],
+    segments:[{x:0,name:'隐藏挑战（可选）'}], goalX:1640, playerStart:{x:70,y:GROUND_TOP}, completeMode:'bonus', bonusAct:n };
+  if(bonusAct===1){
+    lv.width=900; lv.height=980; lv.goalX=470; lv.playerStart={x:80,y:GROUND_TOP};
+    lv.platforms.push({x:0,y:GROUND_TOP,w:220,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    for(let i=0;i<9;i++){ lv.platforms.push({x:120+(i%2)*210,y:GROUND_TOP-70-i*74,w:86,h:14,type:'plat'}); }
+    lv.platforms.push({x:380,y:GROUND_TOP-760,w:180,h:16,type:'plat',board:true});
+  } else if(bonusAct===2){
+    lv.width=2300; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    for(let i=0;i<8;i++){ lv.enemySpawns.push({type:i%2?'shield':'patrol',x:360+i*210,y:GROUND_TOP}); }
+    lv.pickups.push({x:lv.width-180,y:GROUND_TOP-18,w:12,h:12,kind:'bonusCoin',taken:false});
+  } else if(bonusAct===3){
+    lv.width=2600; lv.platforms.push({x:0,y:GROUND_TOP,w:210,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.platforms.push({x:lv.width-260,y:GROUND_TOP,w:260,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.hazards.push({x:210,y:GROUND_TOP+10,w:lv.width-470,h:LEVEL_H-GROUND_TOP,type:'spike'});
+    for(let i=0;i<12;i++){ lv.movers.push({x:310+i*160,y:GROUND_TOP-45-(i%3)*32,w:58,h:12,type:'plat',axis:'y',range:34,speed:1.2,phase:i*.7,baseX:310+i*160,baseY:GROUND_TOP-45-(i%3)*32}); }
+    lv.deaths=0;
+  } else if(bonusAct===4){
+    lv.width=1900; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    [[260,260],[260,110],[520,110],[520,260],[780,260],[780,70],[1040,70],[1040,220],[1320,220],[1320,120]].forEach(w=>lv.platforms.push({x:w[0],y:GROUND_TOP-w[1],w:34,h:w[1],type:'ground'}));
+  } else {
+    lv.width=960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.goalX=760; lv.monologue={t:0,typed:0,done:false,fade:0};
+  }
+  return lv;
+}
+function createBonusEntrance(lv, mainAct){
+  const bonusAct = mainAct===ACT_ENGLAND ? 4 : (mainAct===ACT_FINAL ? 5 : mainAct+1);
+  const x = mainAct===ACT_FINAL ? 420 : Math.min(lv.width-980, Math.max(520, lv.width*0.28));
+  lv.triggers.push({x,y:GROUND_TOP-70,w:72,h:70,type:'bonusEntrance',fired:false,persist:true,bonusAct});
+}
+function saveBonusReturn(){
+  return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats) };
+}
+function enterBonus(actNumber){
+  if(bonusLevel) return;
+  bonusReturn=saveBonusReturn(); bonusLevel={act:actNumber, kind:BONUS_TITLES[actNumber-1]};
+  level=buildBonusLevel(actNumber); player=makePlayer(level.playerStart.x, level.playerStart.y); player.hp=bonusReturn.hp; player.ammo=bonusReturn.ammo;
+  enemies=[]; projectiles=[]; rocks=[]; particles=[]; floaters=[]; petals=[]; texts=[]; boss=null; bossStarted=false; companion=null;
+  level.enemySpawns.forEach(s=>enemies.push(makeEnemy(s.type,s.x,s.y)));
+  respawn={x:level.playerStart.x,y:level.playerStart.y}; camX=0; camY=0; state=STATE.PLAY; Dialog.clear();
+  dom.levelLabel.textContent='趣味支线 · '+bonusLevel.kind; dom.timerRow.style.display='none'; Sound.setMusic(ACTS[actNumber-1].music, .85);
+  addFloater(player.x+60, player.y-30, '隐藏挑战开始 · Esc 放弃返回', '#e8c25a', 14);
+}
+function exitBonus(success){
+  const saved=bonusReturn; const done=bonusLevel;
+  bonusLevel=null; bonusReturn=null; hide(dom.messageBoard);
+  loadLevel(saved.actIndex, true);
+  score=saved.score; stats=saved.stats; dom.scoreVal.textContent=score;
+  respawn={x:saved.respawn.x,y:saved.respawn.y}; player=makePlayer(saved.respawn.x, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.invuln=90;
+  camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
+  state=STATE.PLAY; updateHUD();
+  if(success && done) addFloater(player.x+player.w/2, player.y-35, '支线完成：'+done.kind, '#e8c25a', 14);
+}
 
 function makePlayer(x,y){
   return {
@@ -2165,7 +2301,7 @@ function updatePlayer(){
   const solids=solidsList();
   stepPhysics(p, solids);
   // 掉出世界底部
-  if(p.y>level.height+40){ if(actIndex===3) drownPlayer(); else damagePlayer(30, p.x); if(!p.dead){ p.y=respawn.y-PLAYER_H; p.x=respawn.x; p.vy=0; } }
+  if(p.y>level.height+40){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=60; return; } if(actIndex===3) drownPlayer(); else damagePlayer(30, p.x); if(!p.dead){ p.y=respawn.y-PLAYER_H; p.x=respawn.x; p.vy=0; } }
   // 危险区
   checkHazards();
   // 姿态
@@ -2187,7 +2323,7 @@ function checkHazards(){
     if(hz.type==='water'){
       if(rectsOverlap(feet,hz)){ if(actIndex===3){ drownPlayer(); } else { damagePlayer(20,hz.x+hz.w/2); if(!p.dead){ p.vy=-6; p.x=respawn.x; p.y=respawn.y-PLAYER_H; } } return; }
     } else if(hz.type==='spike'){
-      if(rectsOverlap(feet,hz)){ damagePlayer(14, p.x+ (p.x<hz.x+hz.w/2? -20:20)); if(!p.dead){ p.vy=-7; } return; }
+      if(rectsOverlap(feet,hz)){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=50; addFloater(p.x+p.w/2,p.y-16,'死亡次数 '+level.deaths,'#ff8a8a',13); return; } damagePlayer(14, p.x+ (p.x<hz.x+hz.w/2? -20:20)); if(!p.dead){ p.vy=-7; } return; }
     } else if(hz.type==='poison'){
       if(rectsOverlap(body,hz)){ if(frame%20===0) damagePlayer(6, p.x); if(frame%8===0) smoke(p.x+p.w/2, p.y+p.h, 'rgba(140,220,90,0.4)'); }
     }
@@ -2386,6 +2522,8 @@ function fireTrigger(tr){
     showStory(STORY.a5_yorick, ()=>{ state=STATE.PLAY; });
   } else if(tr.type==='rescue'){ // 湖畔救援成功
     rescueOphelia();
+  } else if(tr.type==='bonusEntrance'){
+    enterBonus(tr.bonusAct);
   }
 }
 function updateCompanion(){
@@ -2807,8 +2945,9 @@ function update(){
   if(comboTimer>0){ comboTimer--; if(comboTimer<=0){ comboCount=0; dom.combo.textContent=''; } }
 
   if(state===STATE.STORY){ tickStory(); }
-  else if(state===STATE.PLAY){ updatePlay(); }
+  else if(state===STATE.PLAY){ if(bonusLevel) updateBonusPlay(); else updatePlay(); }
   else if(state==='ending'){ updateEnding(); }
+  else if(state==='messageBoard'){ updateMessageMeta(); }
 
   updateParticles();
   // 边沿复位（每帧末尾）
@@ -2866,6 +3005,33 @@ function updatePunkOphelia(){
   }
 }
 
+function finishBonus(){
+  if(!bonusLevel) return;
+  const act=bonusLevel.act;
+  if(act===2) addScore(500);
+  if(act===3) addScore(1800);
+  if(act===4) Dialog.push([DL('left','哈姆雷特','海雾也有出口，心中的迷宫亦然。')]);
+  openMessageBoard(act, BONUS_TITLES[act-1], act===1 ? '你是第'+(Number(localStorage.getItem('hamlet_peak_count')||0)+1)+'个到达顶峰' : '留下这一关的挑战记录。');
+  if(act===1) localStorage.setItem('hamlet_peak_count', String(Number(localStorage.getItem('hamlet_peak_count')||0)+1));
+}
+function updateBonusPlay(){
+  stats.time += 1/60;
+  updateMovers(); updatePlayer();
+  if(player.dead) return;
+  if(bonusLevel.act!==5){ updateEnemies(); updateProjectiles(); updatePickups(); }
+  if(bonusLevel.act===5) updateBonusMonologue();
+  if(player.x+player.w>level.goalX && (!level.monologue || level.monologue.done)) finishBonus();
+  updateCamera();
+  if(++hudTick%4===0) updateHUD();
+}
+function updateBonusMonologue(){
+  const m=level.monologue; if(!m) return;
+  const text='To be, or not to be, that is the question...\n生存还是毁灭，这是个问题……';
+  m.t++;
+  if(m.t>50 && m.typed<text.length && m.t%3===0) m.typed++;
+  if(m.typed>=text.length){ m.fade=Math.min(120,m.fade+1); if(m.fade>=120) m.done=true; }
+}
+
 /* -------------------------------------------------------------------------
    27. 主循环：渲染
    ------------------------------------------------------------------------- */
@@ -2892,6 +3058,7 @@ function render(){
     // Boss 血条 & 能量条
     if(bossStarted && boss && !boss.dead) drawBossBar();
     if(bossStarted && player && !player.dead) drawEnergyBar();
+    if(bonusLevel) drawBonusOverlay();
     if(actIndex===3 && state===STATE.PLAY) {/* timer in HUD */}
   }
 }
@@ -2908,7 +3075,7 @@ function drawWorld(){
   if(level.bowPickup) drawBowPickup(level.bowPickup);
   for(const it of level.pickups){ if(it.taken||it.x>vx1||it.x+it.w<vx0)continue; drawPickupItem(it); }
   // 目标门
-  if(!goalReached && (actIndex<3)) drawGoal(level.goalX, GROUND_TOP);
+  if(!goalReached && (actIndex<3 || bonusLevel)) drawGoal(level.goalX, GROUND_TOP);
   // 落石
   for(const r of rocks){ if(r.warn>0){ ctx.fillStyle='rgba(255,80,80,'+(0.3+0.3*Math.sin(frame*0.4))+')'; ctx.fillRect(r.x, GROUND_TOP-140, r.w, 6); ctx.fillStyle='rgba(255,120,120,0.6)'; ctx.font='12px serif'; ctx.textAlign='center'; ctx.fillText('!', r.x+r.w/2, GROUND_TOP-130); }
     ctx.fillStyle='#6a5a52'; ctx.fillRect(r.x,r.y,r.w,r.h); ctx.fillStyle='#4a3e38'; ctx.fillRect(r.x+3,r.y+3,r.w-6,r.h-6); }
@@ -2925,6 +3092,33 @@ function drawWorld(){
   if(player && !player.dead){ drawPlayerWorld(); }
   // 粒子/飘字/花瓣
   drawParticlesWorld();
+}
+function drawBonusOverlay(){
+  ctx.save();
+  ctx.fillStyle='rgba(8,6,14,0.62)'; ctx.fillRect(16,86,250,48);
+  ctx.strokeStyle='rgba(232,194,90,.45)'; ctx.strokeRect(16,86,250,48);
+  ctx.fillStyle=ACTS[Math.min(actIndex,ACT_FINAL)].accent; ctx.font='bold 15px "Courier New",monospace'; ctx.textAlign='left';
+  ctx.fillText(bonusLevel.kind, 28, 108);
+  ctx.fillStyle='#c4b98f'; ctx.font='12px "Courier New",monospace';
+  ctx.fillText('可选支线 · Esc 放弃返回主线', 28, 126);
+  if(level.deaths!==undefined){ ctx.fillStyle='#ff8a8a'; ctx.fillText('本局死亡次数 '+level.deaths, W-190, 104); }
+  if(level.monologue) drawBonusMonologueScene();
+  ctx.restore();
+}
+function drawBonusMonologueScene(){
+  const m=level.monologue, text='To be, or not to be, that is the question...\n生存还是毁灭，这是个问题……';
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='rgba(0,0,0,.92)'; ctx.fillRect(0,0,W,H);
+  const alpha=1-clamp((m.fade-40)/80,0,1);
+  const g=ctx.createRadialGradient(W/2,80,10,W/2,260,230); g.addColorStop(0,'rgba(255,255,255,'+(0.7*alpha)+')'); g.addColorStop(1,'rgba(255,255,255,0)'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(110,95,80,.95)'; for(let i=0;i<9;i++) ctx.fillRect(W/2-95+i*22,H-150-Math.sin(i)*8,18,18);
+  ctx.fillStyle='rgba(90,80,70,.9)'; ctx.fillRect(W/2-28,H-150,56,24);
+  drawHamletOn(ctx,W/2,H-140,2.2,ACT_FINAL);
+  ctx.globalAlpha=alpha; ctx.fillStyle='#f0e9d6'; ctx.font='18px "Courier New",monospace'; ctx.textAlign='center';
+  const shown=text.slice(0,m.typed); const parts=shown.split('\n');
+  if(parts[0]) ctx.fillText(parts[0], W/2, 126);
+  if(parts[1]) ctx.fillText(parts[1], W/2, 154);
+  ctx.globalAlpha=1; ctx.restore();
 }
 function drawPlayerWorld(){
   const p=player;
@@ -3091,7 +3285,7 @@ function drawParticlesScreen(){
    29. 覆盖层管理 & 事件
    ------------------------------------------------------------------------- */
 function hideAllOverlays(){
-  [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen].forEach(hide);
+  [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen,dom.messageBoard].forEach(hide);
 }
 function startGame(){
   Sound.unlock();
@@ -3113,6 +3307,10 @@ dom.nextBtn.addEventListener('click', proceedAfterClear);
 dom.restartBtn.addEventListener('click', respawnAtCheckpoint);
 dom.restartWinBtn.addEventListener('click', ()=>{ hideAllOverlays(); show(dom.titleScreen); state=STATE.TITLE; Sound.stopMusic(); });
 dom.muteBtn.addEventListener('click', ()=>{ Sound.unlock(); const on=Sound.toggle(); dom.muteBtn.textContent= on?'🔊 音效开':'🔇 音效关'; if(on){ let mus=ACTS[actIndex]?ACTS[actIndex].music:'castle'; if(actIndex===4)mus=opheliaSaved?'hero':'imperial'; if(bossStarted)mus=opheliaSaved?'hero':'boss'; if(state===STATE.PLAY)Sound.setMusic(mus,1); } });
+dom.messageSubmitBtn.addEventListener('click', submitMessage);
+dom.messageCloseBtn.addEventListener('click', closeMessageBoard);
+dom.messageInput.addEventListener('input', updateMessageMeta);
+window.addEventListener('keydown', e=>{ if(e.code==='Escape' && bonusLevel){ if(state==='messageBoard') closeMessageBoard(); else exitBonus(false); } });
 // 结局推进：点击画布 / 回车
 canvas.addEventListener('click', ()=>{ if(state==='ending') endingProceed(); });
 window.addEventListener('keydown', e=>{ if((e.code==='Enter'||e.code==='Space') && state==='ending'){ endingProceed(); } });
