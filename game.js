@@ -3877,6 +3877,13 @@ async function startGame(){
 
 // 按钮
 dom.startBtn.addEventListener('click', startGame);
+// 页面加载后立即检查昵称，未命名则弹出取名弹窗（不阻断标题页交互）
+(function initNicknameOnLoad(){
+  const stored = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
+  if(!isValidNickname(stored) || !isNicknameConfirmed()){
+    waitForNickname();
+  }
+})();
 dom.storyBtn.addEventListener('click', storyAdvance);
 dom.skipBtn.addEventListener('click', ()=>{ const cb=storyDoneCb; storyDoneCb=null; hide(dom.storyScreen); if(cb)cb(); });
 dom.nextBtn.addEventListener('click', proceedAfterClear);
