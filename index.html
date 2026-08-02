@@ -90,6 +90,17 @@
   #bossGuide .guideRows{display:grid;gap:6px;font-size:14px;line-height:1.45;color:#f0e9d6}
   #bossGuide .guideFoot{margin-top:8px;color:#8f96ab;font-size:11px;text-align:center;font-family:"Courier New",monospace}
 
+  /* 玩家昵称浮层 */
+  #nicknameScreen{background:rgba(0,0,0,.58);backdrop-filter:blur(2px);z-index:24}
+  #nicknameScreen .nicknameCard{width:min(90%,420px);background:linear-gradient(rgba(12,8,18,.94),rgba(12,8,18,.82));border:1px solid rgba(232,194,90,.55);border-radius:14px;padding:22px;box-shadow:0 18px 50px rgba(0,0,0,.72),0 0 32px rgba(232,194,90,.12);text-align:center}
+  #nicknameScreen h2{color:var(--gold);font-size:24px;letter-spacing:2px;text-shadow:2px 2px 0 #000;margin-bottom:10px}
+  #nicknameScreen .nicknameHint{font-size:13px;color:#c4b98f;line-height:1.7;margin-bottom:14px}
+  #nicknameInput{width:100%;background:#100c18;color:#f0e9d6;border:1px solid rgba(232,194,90,.48);border-radius:8px;padding:11px 12px;font:16px/1.4 "Courier New","Songti SC",monospace;text-align:center;outline:none}
+  #nicknameInput:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(232,194,90,.16)}
+  #nicknameMeta{min-height:18px;margin:8px 0 14px;font-size:12px;color:#8f96ab}
+  #nicknameError{display:block;color:#ff8a8a;margin-top:4px}
+  .nicknameActions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+
   /* 趣味支线留言板：DOM textContent 渲染，避免 HTML 注入 */
   #messageBoard{align-items:stretch;gap:10px;background:rgba(5,4,9,.9)}
   #messageBoard .boardWrap{width:min(92%,680px);margin:auto;text-align:left;background:linear-gradient(rgba(12,8,18,.92),rgba(12,8,18,.74));border:1px solid rgba(232,194,90,.46);border-radius:14px;padding:18px;box-shadow:0 16px 46px rgba(0,0,0,.66)}
@@ -169,6 +180,20 @@
       <button class="btn" id="startBtn">开始 · 第一幕</button>
       <div class="controls">
         <span class="key">←→</span>/<span class="key">A</span><span class="key">D</span> 移动 · <span class="key">↑</span>/<span class="key">W</span>/<span class="key">空格</span> 跳 · <span class="key">J</span>/<span class="key">K</span> 攻击 · <span class="key">F</span>/<span class="key">Z</span> 远程（拾取亡魂之弓后）
+      </div>
+    </div>
+
+    <!-- Player nickname -->
+    <div id="nicknameScreen" class="overlay hidden">
+      <div class="nicknameCard">
+        <h2>为你的王子取一个名字</h2>
+        <div class="nicknameHint">昵称会用于留言板与击杀排行。ASCII 最多 15 字符，中文/非 ASCII 最多 10 字符，混合宽度不超过 20。</div>
+        <input id="nicknameInput" type="text" autocomplete="nickname" maxlength="20" placeholder="输入昵称……">
+        <div id="nicknameMeta"><span id="nicknameCount">宽度 0/20</span><span id="nicknameError"></span></div>
+        <div class="nicknameActions">
+          <button class="btn" id="nicknameConfirmBtn">确认</button>
+          <button class="btn ghost" id="nicknameSkipBtn">跳过</button>
+        </div>
       </div>
     </div>
 

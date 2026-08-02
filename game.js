@@ -345,28 +345,63 @@ function makeBrowserUuid(){
   if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
   return 'hamlet-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
 }
-function normalizeNickname(value){ return (value||'').trim().replace(/\s+/g, ' ').slice(0, 12); }
-function isValidNickname(value){ const name=normalizeNickname(value); return name.length>=2 && name.length<=12 && /^[\u4e00-\u9fa5A-Za-z0-9_\- ]+$/.test(name); }
-async function ensurePlayerProfile(){
-  if(currentPlayer.ready) return currentPlayer;
-  let uuid = safeStorageGet(PLAYER_UUID_KEY);
-  let nickname = safeStorageGet(PLAYER_NICKNAME_KEY);
-  if(!uuid){ uuid = makeBrowserUuid(); safeStorageSet(PLAYER_UUID_KEY, uuid); }
-  while(!isValidNickname(nickname)){
-    const input = window.prompt('输入你的游戏昵称（2-12字符，支持中英文）', nickname||'');
-    if(input===null) nickname = '丹麦勇士';
-    else nickname = normalizeNickname(input);
-    if(!isValidNickname(nickname)) window.alert('昵称需为2-12字符，支持中文、英文、数字、空格、下划线和短横线。');
+function nicknameWidth(text){
+  let width=0;
+  for(const ch of text){ width += ch.charCodeAt(0)>127 ? 2 : 1; }
+  return width;
+}
+function clampNicknameInput(text){
+  let out='', width=0, ascii=0, wide=0;
+  for(const ch of String(text||'').trim().replace(/\s+/g, ' ')){
+    const isWide = ch.charCodeAt(0)>127;
+    const add = isWide ? 2 : 1;
+    if(width + add > 20) break;
+    if(isWide){ if(wide>=10) break; wide++; }
+    else { if(ascii>=15) break; ascii++; }
+    out += ch; width += add;
   }
-  safeStorageSet(PLAYER_NICKNAME_KEY, nickname);
+  return out;
+}
+function normalizeNickname(value){ return clampNicknameInput(value); }
+function isValidNickname(value){ return normalizeNickname(value).length>0; }
+function makeRandomNickname(){ return '无名王子_'+Math.random().toString(36).slice(2,6); }
+function saveNickname(nickname){ safeStorageSet(PLAYER_NICKNAME_KEY, nickname); currentPlayer.nickname=nickname; }
+function syncPlayerProfile(){
+  if(!supabaseClient || !currentPlayer.uuid || !currentPlayer.nickname) return Promise.resolve(currentPlayer);
+  return supabaseClient.from('players').upsert({ browser_uuid:currentPlayer.uuid, nickname:currentPlayer.nickname }, { onConflict:'browser_uuid' }).select('id,nickname,browser_uuid').single()
+    .then(({ data, error })=>{
+      if(error) throw error;
+      if(data) currentPlayer = { id:data.id, uuid:data.browser_uuid||currentPlayer.uuid, nickname:data.nickname||currentPlayer.nickname, ready:true };
+      return currentPlayer;
+    }).catch(()=>currentPlayer);
+}
+function ensurePlayerProfile(){
+  if(currentPlayer.ready) return Promise.resolve(currentPlayer);
+  let uuid = safeStorageGet(PLAYER_UUID_KEY);
+  let nickname = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
+  if(!uuid){ uuid = makeBrowserUuid(); safeStorageSet(PLAYER_UUID_KEY, uuid); }
+  if(!isValidNickname(nickname)) nickname = makeRandomNickname();
   currentPlayer = { id:null, uuid, nickname, ready:true };
-  if(!supabaseClient) return currentPlayer;
-  try {
-    const { data, error } = await supabaseClient.from('players').upsert({ browser_uuid:uuid, nickname }, { onConflict:'browser_uuid' }).select('id,nickname,browser_uuid').single();
-    if(error) throw error;
-    if(data) currentPlayer = { id:data.id, uuid:data.browser_uuid||uuid, nickname:data.nickname||nickname, ready:true };
-  } catch {}
-  return currentPlayer;
+  saveNickname(nickname);
+  return syncPlayerProfile();
+}
+function waitForNickname(){
+  const stored = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
+  if(isValidNickname(stored)) return ensurePlayerProfile();
+  return new Promise(resolve=>{
+    const finish = nickname=>{ saveNickname(nickname); hide(dom.nicknameScreen); ensurePlayerProfile().then(resolve); };
+    const update = ()=>{
+      const clamped=clampNicknameInput(dom.nicknameInput.value);
+      if(clamped!==dom.nicknameInput.value) dom.nicknameInput.value=clamped;
+      dom.nicknameCount.textContent='宽度 '+nicknameWidth(dom.nicknameInput.value)+'/20（ASCII≤15，中文≤10）';
+      dom.nicknameError.textContent='';
+    };
+    dom.nicknameInput.value=''; update(); hideAllOverlays(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
+    dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent='请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname); };
+    dom.nicknameSkipBtn.onclick=()=>finish(makeRandomNickname());
+    dom.nicknameInput.oninput=update;
+    dom.nicknameInput.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); dom.nicknameConfirmBtn.click(); } };
+  });
 }
 
 const dom = {
@@ -384,7 +419,9 @@ const dom = {
   winScreen:$('winScreen'), winQuote:$('winQuote'), winScore:$('winScore'), restartWinBtn:$('restartWinBtn'),
   loseScreen:$('loseScreen'), loseTitle:$('loseTitle'), loseText:$('loseText'), loseScore:$('loseScore'), restartBtn:$('restartBtn'),
   messageBoard:$('messageBoard'), messageTitle:$('messageTitle'), messagePrompt:$('messagePrompt'), messageInput:$('messageInput'),
-  messageCount:$('messageCount'), messageError:$('messageError'), messageSubmitBtn:$('messageSubmitBtn'), messageCloseBtn:$('messageCloseBtn'), messageList:$('messageList')
+  messageCount:$('messageCount'), messageError:$('messageError'), messageSubmitBtn:$('messageSubmitBtn'), messageCloseBtn:$('messageCloseBtn'), messageList:$('messageList'),
+  nicknameScreen:$('nicknameScreen'), nicknameInput:$('nicknameInput'), nicknameCount:$('nicknameCount'), nicknameError:$('nicknameError'),
+  nicknameConfirmBtn:$('nicknameConfirmBtn'), nicknameSkipBtn:$('nicknameSkipBtn')
 };
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
@@ -3520,10 +3557,10 @@ function drawParticlesScreen(){
    29. 覆盖层管理 & 事件
    ------------------------------------------------------------------------- */
 function hideAllOverlays(){
-  [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen,dom.messageBoard].forEach(hide);
+  [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen,dom.messageBoard,dom.nicknameScreen].forEach(hide);
 }
 async function startGame(){
-  await ensurePlayerProfile();
+  await waitForNickname();
   Sound.unlock();
   score=0; comboCount=0; comboTimer=0; stats={time:0,kills:0,boxes:0,secrets:0};
   opheliaSaved=true; hasBow=false; darkMode=false; opheliaWounded=false; ghostOpheliaFinale=false;
