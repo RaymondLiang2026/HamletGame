@@ -365,6 +365,7 @@ function clampNicknameInput(text){
 function normalizeNickname(value){ return clampNicknameInput(value); }
 function isValidNickname(value){ return normalizeNickname(value).length>0; }
 function makeRandomNickname(){ return '无名王子_'+Math.random().toString(36).slice(2,6); }
+function getPlayerNickname(){ return currentPlayer.nickname || normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY)) || ''; }
 function saveNickname(nickname){ safeStorageSet(PLAYER_NICKNAME_KEY, nickname); currentPlayer.nickname=nickname; }
 function syncPlayerProfile(){
   if(!supabaseClient || !currentPlayer.uuid || !currentPlayer.nickname) return Promise.resolve(currentPlayer);
@@ -2172,7 +2173,14 @@ const Dialog = {
   push(lines){ (lines||[]).forEach(l=>{ this.queue.push(l); this.src.push(l); }); },
   clear(){ this.queue=[]; this.src=[]; this.cur=null; this.hold=0; this.gap=0; this._hideBoth(); },
   _hideBoth(){ if(dom.dlgLeft){ dom.dlgLeft.classList.remove('show'); dom.dlgRight.classList.remove('show'); } },
-  _fill(el,l){ if(!el) return; el.querySelector('.who').textContent=l.name; el.querySelector('.zh').textContent=l.zh; el.querySelector('.en').textContent=l.en||''; },
+  _speakerName(l){
+    if(l.side==='left' && l.name==='哈姆雷特'){
+      const nickname=getPlayerNickname();
+      if(nickname) return '哈姆雷特（'+nickname+'）';
+    }
+    return l.name;
+  },
+  _fill(el,l){ if(!el) return; el.querySelector('.who').textContent=this._speakerName(l); el.querySelector('.zh').textContent=l.zh; el.querySelector('.en').textContent=l.en||''; },
   update(){
     if(!dom.dlgLeft) return;
     if(this.hold>0){ this.hold--; if(this.hold===0){ (this.cur.side==='left'?dom.dlgLeft:dom.dlgRight).classList.remove('show'); this.gap=26; } return; }
@@ -3381,7 +3389,25 @@ function drawPlayerWorld(){
   if(p.invuln>0 && (frame>>2)%2===0 && p.hurtT<=0){} else {
     if(p.ultActive>0){ ctx.save(); ctx.globalAlpha=0.5; const g=ctx.createRadialGradient(p.x+p.w/2,p.y+p.h/2,4,p.x+p.w/2,p.y+p.h/2,60); g.addColorStop(0,'rgba(232,194,90,0.6)'); g.addColorStop(1,'rgba(232,194,90,0)'); ctx.fillStyle=g; ctx.fillRect(p.x-40,p.y-30,p.w+80,p.h+60); ctx.restore(); }
     drawHamlet(p.x+p.w/2, p.y+p.h, p.facing, p.pose, actIndex);
+    drawPlayerNickname(p);
   }
+}
+function drawPlayerNickname(p){
+  const nickname=getPlayerNickname();
+  if(!nickname) return;
+  ctx.save();
+  ctx.font='bold 12px "Courier New","Songti SC",monospace';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  const x=p.x+p.w/2, y=p.y-10;
+  const textWidth=ctx.measureText(nickname).width;
+  ctx.fillStyle='rgba(0,0,0,0.52)';
+  ctx.fillRect(x-textWidth/2-5, y-8, textWidth+10, 16);
+  ctx.strokeStyle='rgba(232,194,90,0.35)';
+  ctx.strokeRect(x-textWidth/2-5, y-8, textWidth+10, 16);
+  ctx.fillStyle='#f0e9d6';
+  ctx.fillText(nickname, x, y+1);
+  ctx.restore();
 }
 function drawProjectile(pr){
   ctx.save(); ctx.translate(pr.x,pr.y);
