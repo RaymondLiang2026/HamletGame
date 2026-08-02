@@ -1,6 +1,6 @@
 # HAMLET · 王子的复仇 🗡️
 
-一款以莎士比亚《哈姆雷特》为主题的 **五幕横版过关史诗游戏**。纯前端实现（HTML5 Canvas + 原生 JavaScript），**无任何外部依赖、无 CDN、无图片/音频文件**——所有图形由 Canvas 代码绘制，所有音乐音效由 Web Audio API 程序化合成，可在 GitHub Pages 纯静态托管下运行。
+一款以莎士比亚《哈姆雷特》为主题的 **五幕横版过关史诗游戏**。前端使用 HTML5 Canvas + 原生 JavaScript，游戏图形由 Canvas 代码绘制，音乐音效由 Web Audio API 程序化合成；联网昵称、留言板与 Boss 击杀排行通过 Supabase JS SDK 接入。
 
 ▶️ **在线试玩**：https://raymondliang2026.github.io/HamletGame/
 
@@ -44,8 +44,9 @@
 
 ## 技术
 
-- 单页面：`index.html`（UI/样式） + `game.js`（游戏引擎，约 2600 行）。
-- 无构建、无依赖，直接静态托管即可运行；`node --check game.js` 语法校验通过。
+- 单页面：`index.html`（UI/样式） + `game.js`（游戏引擎，约 3300 行）。
+- Supabase JS SDK 通过 CDN 引入，用于玩家昵称、全球留言板和 Boss 击杀计数；网络失败时留言板回退到 localStorage。
+- 无构建流程，直接静态托管即可运行；`node --check game.js` 可做语法校验。
 
 ## 本地运行
 

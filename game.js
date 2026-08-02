@@ -286,6 +286,50 @@ const JINGLES = {
    4. DOM 引用 & HUD
    ------------------------------------------------------------------------- */
 const $ = id => document.getElementById(id);
+
+const SUPABASE_URL = 'https://vxndmttnbjpuawawnwwp.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4bmRtdHRuYmpwdWF3YXdud3dwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1NjM2NTIsImV4cCI6MjEwMTEzOTY1Mn0.IjpjW5UpwhbdXFi__uwzdOKRgdsO89khwSFMg9UON2A';
+const PLAYER_UUID_KEY = 'hamlet_player_uuid';
+const PLAYER_NICKNAME_KEY = 'hamlet_player_nickname';
+let supabaseClient = null;
+let currentPlayer = { id:null, uuid:null, nickname:null, ready:false };
+
+try {
+  if(window.supabase && typeof window.supabase.createClient === 'function'){
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+} catch { supabaseClient = null; }
+
+function safeStorageGet(key){ try { return localStorage.getItem(key); } catch{ return null; } }
+function safeStorageSet(key, value){ try { localStorage.setItem(key, value); } catch{} }
+function makeBrowserUuid(){
+  if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  return 'hamlet-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+}
+function normalizeNickname(value){ return (value||'').trim().replace(/\s+/g, ' ').slice(0, 12); }
+function isValidNickname(value){ const name=normalizeNickname(value); return name.length>=2 && name.length<=12 && /^[\u4e00-\u9fa5A-Za-z0-9_\- ]+$/.test(name); }
+async function ensurePlayerProfile(){
+  if(currentPlayer.ready) return currentPlayer;
+  let uuid = safeStorageGet(PLAYER_UUID_KEY);
+  let nickname = safeStorageGet(PLAYER_NICKNAME_KEY);
+  if(!uuid){ uuid = makeBrowserUuid(); safeStorageSet(PLAYER_UUID_KEY, uuid); }
+  while(!isValidNickname(nickname)){
+    const input = window.prompt('输入你的游戏昵称（2-12字符，支持中英文）', nickname||'');
+    if(input===null) nickname = '丹麦勇士';
+    else nickname = normalizeNickname(input);
+    if(!isValidNickname(nickname)) window.alert('昵称需为2-12字符，支持中文、英文、数字、空格、下划线和短横线。');
+  }
+  safeStorageSet(PLAYER_NICKNAME_KEY, nickname);
+  currentPlayer = { id:null, uuid, nickname, ready:true };
+  if(!supabaseClient) return currentPlayer;
+  try {
+    const { data, error } = await supabaseClient.from('players').upsert({ browser_uuid:uuid, nickname }, { onConflict:'browser_uuid' }).select('id,nickname,browser_uuid').single();
+    if(error) throw error;
+    if(data) currentPlayer = { id:data.id, uuid:data.browser_uuid||uuid, nickname:data.nickname||nickname, ready:true };
+  } catch {}
+  return currentPlayer;
+}
+
 const dom = {
   hud:$('hud'), playerHp:$('playerHp'), ophRow:$('ophRow'), ophHp:$('ophHp'),
   ammoRow:$('ammoRow'), ammoVal:$('ammoVal'), ammoMax:$('ammoMax'), ammoCd:$('ammoCd'),
@@ -361,7 +405,12 @@ function launchFirework(x,y){
   const cs=['#e8c25a','#e23b3b','#7fd4ee','#8ee88e','#ff9bd0','#fff'], c=cs[(Math.random()*cs.length)|0];
   for(let i=0;i<26;i++){ const a=6.283*i/26,s=rand(2.4,4.2); fireworks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(34,52),max:52,color:c,size:rand(2,3.5)}); }
 }
-function addFloater(x,y,text,color,size){ floaters.push({x,y,text,color,size:size||14,life:56,max:56}); }
+function addFloater(x,y,text,color,size){ floaters.push({x,y,text,color,size:size||14,life:56,max:56,world:true}); }
+function addScreenFloater(x,y,text,color,size,life){ floaters.push({x,y,text,color,size:size||14,life:life||120,max:life||120,world:false}); }
+function drawTextPanel(x,y,w,h,fill,stroke){
+  ctx.fillStyle=fill||'rgba(8,6,14,0.78)'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=stroke||'rgba(232,194,90,0.55)'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+}
 
 function updateParticles(){
   for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=p.g; if(p.grow)p.size+=p.grow; if(p.ripple)p.ripple+=1.4; if(--p.life<=0) particles.splice(i,1); }
@@ -1183,9 +1232,13 @@ function drawTrigger(tr){
     const a=0.28+0.22*Math.sin(frame*0.09);
     ctx.fillStyle='rgba(232,194,90,'+a+')'; ctx.fillRect(tr.x,tr.y,tr.w,tr.h);
     ctx.strokeStyle='rgba(255,235,160,0.8)'; ctx.lineWidth=2; ctx.strokeRect(tr.x,tr.y,tr.w,tr.h);
-    ctx.fillStyle='#fff2b0'; ctx.font='bold 12px "Courier New",monospace'; ctx.textAlign='center';
-    ctx.fillText(tr.bonusAct===3 ? "→ Monica's Test（可选）" : '→ 隐藏挑战（可选）', tr.x+tr.w/2, tr.y-8);
+  ctx.save(); ctx.textAlign='center';
+  ctx.font='bold 12px "Courier New",monospace';
+  const label=tr.bonusAct===3 ? "→ Monica's Test（可选）" : '→ 隐藏挑战（可选）';
+  drawTextPanel(tr.x+tr.w/2-74,tr.y-28,148,18,'rgba(8,6,14,0.82)','rgba(255,235,160,0.72)');
+  ctx.fillStyle='#fff2b0'; ctx.fillText(label, tr.x+tr.w/2, tr.y-15);
     ctx.fillStyle='#1a1206'; ctx.font='18px serif'; ctx.fillText('★', tr.x+tr.w/2, tr.y+tr.h/2+6);
+    ctx.restore();
   }
 }
 function drawBowPickup(bp){
@@ -1198,10 +1251,9 @@ function drawBowPickup(bp){
   ctx.strokeStyle='rgba(200,180,255,0.9)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(2+13*Math.cos(-1.3),13*Math.sin(-1.3));ctx.lineTo(-6,0);ctx.lineTo(2+13*Math.cos(1.3),13*Math.sin(1.3));ctx.stroke();
   ctx.fillStyle='#c9a6ff';ctx.beginPath();ctx.arc(-2,0,3,0,6.283);ctx.fill();
   // 明显拾取提示文字
-  ctx.font='bold 9px "Courier New",monospace'; ctx.textAlign='center';
-  ctx.fillStyle='rgba(8,6,14,0.6)'; ctx.fillRect(-92,-40,184,13);
-  ctx.strokeStyle='rgba(185,139,255,0.7)'; ctx.lineWidth=1; ctx.strokeRect(-92,-40,184,13);
-  ctx.fillStyle='#e8dcff'; ctx.fillText('拾取 亡魂之弓 — 解锁远程攻击 [F/Z键]', 0, -30);
+  ctx.font='bold 11px "Courier New",monospace'; ctx.textAlign='center';
+  drawTextPanel(-124,-52,248,24,'rgba(8,6,14,0.86)','rgba(185,139,255,0.85)');
+  ctx.fillStyle='#f2e8ff'; ctx.fillText('拾取【亡魂之弓】解锁远程攻击 [F/Z]', 0, -36);
   ctx.textAlign='left';
   ctx.restore();
 }
@@ -1934,17 +1986,29 @@ function clampMessageInput(text){
 }
 function messageStorageKey(act){ return 'hamlet_messages_act'+act; }
 function messageThrottleKey(act){ return 'hamlet_message_last_act'+act; }
-function getMessages(act){
-  try { return JSON.parse(localStorage.getItem(messageStorageKey(act))||'[]').filter(v=>typeof v==='string'); }
-  catch(e){ return []; }
+function normalizeMessageRow(row){
+  if(typeof row==='string') return { nickname:'本地玩家', content:row, level:null };
+  return { nickname:row.nickname||'匿名勇士', content:String(row.content||''), level:row.level };
 }
-function setMessages(act, messages){ localStorage.setItem(messageStorageKey(act), JSON.stringify(messages.slice(-30))); }
-function renderMessageList(act){
+function getMessages(act){
+  try { return JSON.parse(safeStorageGet(messageStorageKey(act))||'[]').map(normalizeMessageRow).filter(v=>v.content); }
+  catch{ return []; }
+}
+function setMessages(act, messages){ safeStorageSet(messageStorageKey(act), JSON.stringify(messages.slice(-30))); }
+function paintMessages(messages){
   if(!dom.messageList) return;
   dom.messageList.textContent='';
-  const messages=getMessages(act);
   if(!messages.length){ const empty=document.createElement('div'); empty.className='msg'; empty.textContent='暂无留言，成为第一个记录者。'; dom.messageList.appendChild(empty); return; }
-  messages.slice().reverse().forEach(msg=>{ const item=document.createElement('div'); item.className='msg'; item.textContent=msg; dom.messageList.appendChild(item); });
+  messages.slice(0,20).forEach(msg=>{ const item=document.createElement('div'); item.className='msg'; item.textContent=(msg.nickname?msg.nickname+'：':'')+msg.content; dom.messageList.appendChild(item); });
+}
+function renderMessageList(act){ paintMessages(getMessages(act).slice().reverse()); }
+async function loadRemoteMessages(act){
+  if(!supabaseClient) return;
+  try {
+    const { data, error } = await supabaseClient.from('messages').select('nickname,content,level,created_at').eq('level', act).order('created_at', { ascending:false }).limit(20);
+    if(error) throw error;
+    if(Array.isArray(data)) paintMessages(data.map(normalizeMessageRow));
+  } catch {}
 }
 function updateMessageMeta(){
   if(!dom.messageInput) return;
@@ -1961,19 +2025,30 @@ function openMessageBoard(act, title, promptText){
   dom.messageInput.value='';
   updateMessageMeta();
   renderMessageList(act);
+  loadRemoteMessages(act);
   hideAllOverlays(); show(dom.messageBoard);
 }
-function submitMessage(){
+async function submitMessage(){
   const act=bonusBoardAct;
   const text=clampMessageInput((dom.messageInput.value||'').trim());
   const now=Date.now();
-  const last=Number(localStorage.getItem(messageThrottleKey(act))||0);
+  const last=Number(safeStorageGet(messageThrottleKey(act))||0);
   if(!text){ dom.messageError.textContent='留言不能为空'; return; }
   if(now-last<5*60*1000){ dom.messageError.textContent='同一浏览器每关每5分钟限提交1条'; return; }
-  const messages=getMessages(act); messages.push(text); setMessages(act,messages);
-  localStorage.setItem(messageThrottleKey(act), String(now));
+  const playerProfile = await ensurePlayerProfile();
+  const message = { nickname:playerProfile.nickname||'匿名勇士', content:text, level:act };
+  const messages=getMessages(act); messages.push(message); setMessages(act,messages);
+  safeStorageSet(messageThrottleKey(act), String(now));
   dom.messageInput.value=''; updateMessageMeta(); renderMessageList(act);
-  dom.messageError.textContent='已保存到本地留言板';
+  if(!supabaseClient){ dom.messageError.textContent='网络不可用，已保存到本地留言板'; return; }
+  try {
+    const { error } = await supabaseClient.from('messages').insert({ player_id:playerProfile.id, nickname:message.nickname, content:text, level:act });
+    if(error) throw error;
+    dom.messageError.textContent='已同步到全球留言板';
+    loadRemoteMessages(act);
+  } catch {
+    dom.messageError.textContent='网络失败，已保存到本地留言板';
+  }
 }
 function closeMessageBoard(){
   hide(dom.messageBoard);
@@ -2680,6 +2755,15 @@ function updateBossUlt(){
     }
   }
 }
+async function syncBossKill(kind, bossName, x, y){
+  if(!supabaseClient) return;
+  try {
+    const playerProfile = await ensurePlayerProfile();
+    const { data, error } = await supabaseClient.from('boss_kills').insert({ player_id:playerProfile.id, nickname:playerProfile.nickname||'匿名勇士', act:kind }).select('kill_rank').single();
+    if(error) throw error;
+    if(data && data.kill_rank){ addFloater(x, y, '你是第 '+data.kill_rank+' 位击杀 '+bossName+' 的勇士', '#7fd4ee', 16); }
+  } catch {}
+}
 function onBossDefeated(){
   const entry=activeBossEntry, kind=boss.kind, D=boss.def;
   boss.dead=true; boss.deathT=120; bossStarted=false;
@@ -2690,6 +2774,7 @@ function onBossDefeated(){
   enemies.forEach(e=>{ if(!e.dying) killEnemy(e); });
   if(entry) entry.defeated=true;
   addFloater(boss.x+boss.w/2, boss.y-30, D.name+' 伏诛! +2000', '#e8c25a', 18);
+  syncBossKill(kind, D.name, boss.x+boss.w/2, boss.y-54);
 
   if(entry && entry.midboss){          // 终章中段 Boss 雷欧提斯：不结束关卡
     laertesDefeated=true; Sound.jingle('victory');
@@ -3287,7 +3372,8 @@ function drawParticlesScreen(){
 function hideAllOverlays(){
   [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen,dom.messageBoard].forEach(hide);
 }
-function startGame(){
+async function startGame(){
+  await ensurePlayerProfile();
   Sound.unlock();
   score=0; comboCount=0; comboTimer=0; stats={time:0,kills:0,boxes:0,secrets:0};
   opheliaSaved=true; hasBow=false; darkMode=false;
