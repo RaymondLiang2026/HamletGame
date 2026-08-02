@@ -39,6 +39,8 @@ let bowLost = false;                 // 亡魂之弓被鬼魂夺走（湖边彩�
 let darkMode = false;                // 失败路线的阴郁哥特模式（终章）
 let poisonT = 0;                     // 终章溺死路线：哈姆雷特中毒倒计时（帧），>0 时持续掉血
 let laertesDefeated = false;         // 终章中段 Boss 雷欧提斯是否已被击败
+let opheliaWounded = false;          // 生还线第五幕：奥菲莉亚替挡毒剑后倒下
+let ghostOpheliaFinale = false;      // 生还线最终战：亡魂奥菲莉亚半透明助战
 
 /* -------------------------------------------------------------------------
    1. 工具函数
@@ -167,10 +169,40 @@ const Sound = {
   ult(){ [110,146,196,262,392].forEach((f,i)=>this.blip(f,.5,'sawtooth',.44,i*.06,f*2)); this.noise(.6,.3,0,120); },
   // 疯朋克奥菲莉亚：失真尖啸音效（去调锯齿簇 + 噪声，强化朋克疯癫形象）
   punkGlitch(){ if(!this.ctx||!this.enabled) return;
-    [138,146,207].forEach((f,i)=>this.blip(f*(1+i*0.04),.5,'sawtooth',.15,i*.02,f*0.6));
-    this.noise(.34,.13,0,600);
-    this.blip(440,.28,'sawtooth',.09,.05,110);
+    try {
+      [138,146,207].forEach((f,i)=>this.blip(f*(1+i*0.04),.5,'sawtooth',.15,i*.02,f*0.6));
+      this.noise(.34,.13,0,600);
+      this.blip(440,.28,'sawtooth',.09,.05,110);
+    } catch {}
   },
+  safe(fn){ try { this.unlock(); if(this.enabled && typeof fn==='function') fn.call(this); } catch {} },
+  characterCue(kind){ this.safe(function(){
+    const cues={
+      hamlet:()=>{ [262,330,392].forEach((f,i)=>this.blip(f,.18,'sawtooth',.18,i*.08)); },
+      ghost:()=>{ this.blip(55,.9,'sine',.34,0,42); this.blip(110,1.1,'triangle',.18,.08,70); this.noise(.7,.08,.05,120); },
+      ophelia:()=>{ [523,659,784].forEach((f,i)=>this.blip(f,.16,'triangle',.14,i*.09)); },
+      punkOphelia:()=>{ this.punkGlitch(); this.blip(880,.14,'sawtooth',.18,0,160); },
+      ghostOphelia:()=>{ this.noise(.5,.09,0,260); [392,523,784].forEach((f,i)=>this.blip(f,.45,'sine',.10,i*.12)); },
+      clown:()=>{ [880,1175,740].forEach((f,i)=>this.bellHit(f,i*.08,.12)); },
+      laertes:()=>{ this.noise(.08,.12,0,2200); this.blip(1760,.12,'triangle',.15,0,920); },
+      claudius:()=>{ [130,196,262].forEach((f,i)=>this.blip(f,.28,'sawtooth',.22,i*.1)); },
+      assassin:()=>{ this.noise(.16,.16,0,1800); this.blip(1200,.08,'triangle',.12,0,360); }
+    };
+    (cues[kind]||(()=>{}))();
+  }); },
+  battleCue(kind){ this.safe(function(){
+    const cues={
+      hamletAttack:()=>{ this.noise(.08,.12,0,1800); this.blip(980,.08,'triangle',.18,0,520); },
+      ghostHit:()=>{ this.noise(.28,.16,0,520); this.blip(160,.32,'sine',.18,0,60); },
+      punkLaugh:()=>{ this.punkGlitch(); this.blip(740,.2,'sawtooth',.16,0,160); this.blip(930,.18,'sawtooth',.12,.08,180); },
+      ghostOpheliaAttack:()=>{ this.noise(.28,.1,0,220); [523,659,880].forEach((f,i)=>this.blip(f,.18,'sine',.13,i*.06)); },
+      ghostOpheliaVanish:()=>{ this.noise(1.3,.12,0,180); [392,330,262,196].forEach((f,i)=>this.blip(f,.55,'triangle',.16,i*.18)); },
+      clownHit:()=>{ this.bellHit(1047,0,.12); this.noise(.12,.14,0,900); },
+      laertesStrike:()=>{ this.noise(.06,.12,0,2600); this.blip(1600,.08,'triangle',.14,0,700); },
+      claudiusHeavy:()=>{ this.noise(.22,.18,0,180); this.blip(88,.36,'sawtooth',.28,0,55); }
+    };
+    (cues[kind]||(()=>{}))();
+  }); },
   // ---- 过场短曲 ----
   jingle(name){
     if(!this.ctx||!this.enabled) return;
@@ -236,6 +268,13 @@ const Sound = {
   stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; },
   toggle(){ this.enabled=!this.enabled; if(!this.enabled) this.stopMusic(); return this.enabled; }
 };
+(function hardenSoundAPI(){
+  Object.keys(Sound).forEach(k=>{
+    if(typeof Sound[k] !== 'function' || k==='safe') return;
+    const fn=Sound[k];
+    Sound[k]=function(...args){ try { return fn.apply(this,args); } catch {} };
+  });
+})();
 
 const MUSIC = {
   // 第一幕 城堡：中世纪宫廷，弦乐 + 鲁特琴（triangle 拨奏感）
@@ -891,40 +930,68 @@ function drawElite(e,t,w){ // 精英/小Boss：更大更华丽
   if(e.atkT>0){ ctx.strokeStyle='rgba(255,120,120,0.5)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(9,-H+12,22,-1.2,0.8);ctx.stroke(); }
 }
 
+function drawOpheliaFigure(mode, t, wounded){
+  const ghost = mode==='ghost';
+  const punk = mode==='punk';
+  const sway=Math.sin(t*0.08)*2;
+  if(ghost){
+    ctx.save(); ctx.globalAlpha=0.45+0.14*Math.sin(t*0.1);
+    const g=ctx.createRadialGradient(0,-30,2,0,-30,34); g.addColorStop(0,'rgba(220,245,255,0.72)'); g.addColorStop(1,'rgba(120,190,255,0)'); ctx.fillStyle=g; ctx.fillRect(-34,-66,68,66);
+    ctx.fillStyle='rgba(190,230,255,0.62)'; ctx.beginPath(); ctx.moveTo(-10,-18); ctx.lineTo(10,-18); ctx.lineTo(14+sway,0); ctx.lineTo(4,8); ctx.lineTo(-3,2); ctx.lineTo(-11,9); ctx.closePath(); ctx.fill();
+    px(-6,-38,12,18,'rgba(220,245,255,0.82)'); px(-6,-52,12,10,'rgba(235,250,255,0.86)');
+    ctx.strokeStyle='rgba(220,245,255,0.68)'; ctx.lineWidth=1.5; for(let r=10;r<28;r+=8){ ctx.beginPath(); ctx.arc(0,-4,r,0,Math.PI*2); ctx.stroke(); }
+    ctx.restore(); return;
+  }
+  if(wounded){ ctx.rotate(-0.72); ctx.translate(-8,10); }
+  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(0,0,13,3,0,0,6.283); ctx.fill();
+  ctx.fillStyle=punk?'#542047':'#8ab8d8'; ctx.beginPath(); ctx.moveTo(-10,-17); ctx.lineTo(9,-17); ctx.lineTo(14,0); ctx.lineTo(-13,0); ctx.closePath(); ctx.fill();
+  if(punk){
+    px(-9,-17,5,13,'#7a2a5a'); px(3,-17,5,13,'#251624'); px(-8,-30,15,17,'#2a1c28'); px(4,-30,4,17,'#94386f');
+    ['#d85a9a','#7a3cff','#b72868'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.fillRect(-8+i*6,-13+i%2*4,4,3); });
+    px(-9,-42,18,10,'#3a2030'); px(-10,-39,4,16,'#3a2030'); px(6,-40,4,14,'#3a2030');
+    ['#d85a9a','#8a4aff','#c9a24a'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.beginPath(); ctx.arc(-7+i*7,-44+(i%2),2.5,0,6.283); ctx.fill(); });
+  } else {
+    px(-6,-30,12,16,'#a8d0e8'); px(4,-30,2,16,'#c0e0f0'); px(-6,-42,12,10,'#c9a24a'); px(-8,-40,3,14,'#c9a24a'); px(5,-40,3,14,'#c9a24a');
+  }
+  px(-5,-40,10,8,punk?'#d8a0b8':'#f0d8b0'); px(-3,-36,2,2,'#2a1620'); px(1,-36,2,2,'#2a1620');
+  px(7,-26,3,3,punk?'#d8a0b8':'#f0d8b0');
+}
+
 // 随从：奥菲莉亚（成功）或霍拉旭
 function drawCompanion(c){
   const cx=c.x+c.w/2, cy=c.y+c.h, f=c.facing;
   ctx.save();
-  ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(cx,cy,c.w*0.5,3,0,0,6.283); ctx.fill();
   ctx.translate(cx,cy); ctx.scale(f,1);
   const t=frame; const legS=c.vx!==0?Math.sin(t*0.35)*2.5:0;
   if(c.kind==='ophelia'){
-    // 光辉裙装
-    if(opheliaSaved){ ctx.save(); ctx.globalAlpha=0.3+0.15*Math.sin(frame*0.1); const g=ctx.createRadialGradient(0,-22,2,0,-22,26); g.addColorStop(0,'rgba(180,220,255,0.5)');g.addColorStop(1,'rgba(180,220,255,0)'); ctx.fillStyle=g; ctx.fillRect(-26,-48,52,48); ctx.restore(); }
-    // 裙摆
-    ctx.fillStyle='#8ab8d8'; ctx.beginPath();ctx.moveTo(-8,-16);ctx.lineTo(8,-16);ctx.lineTo(11,0);ctx.lineTo(-11,0);ctx.closePath();ctx.fill();
-    px(-6,-30,12,16,'#a8d0e8');
-    px(4,-30,2,16,'#c0e0f0');
-    // 头发（长发）
-    px(-6,-42,12,10,'#c9a24a'); px(-8,-40,3,14,'#c9a24a'); px(5,-40,3,14,'#c9a24a');
-    px(-5,-40,10,8,'#f0d8b0'); // 脸
-    px(-3,-36,2,2,'#3a2a20');px(1,-36,2,2,'#3a2a20');
-    // 手（可持花或助攻光）
-    px(6,-26,3,3,'#f0d8b0');
-    if(c.atkT>0){ ctx.fillStyle='rgba(180,220,255,0.7)'; ctx.beginPath();ctx.arc(12,-24,5,0,6.283);ctx.fill(); }
+    drawOpheliaFigure(opheliaWounded?'punk':'punk', t, opheliaWounded);
+    if(c.atkT>0 && !opheliaWounded){ ctx.fillStyle='rgba(214,80,154,0.55)'; ctx.beginPath(); ctx.arc(13,-24,5,0,6.283); ctx.fill(); }
   } else {
     // 霍拉旭：学者装，稳重
+    ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(0,0,c.w*0.5,3,0,0,6.283); ctx.fill();
     px(-7+legS,-14,5,14,'#2a2430'); px(2-legS,-14,5,14,'#1e1a26');
     px(-7,-32,14,18,'#3a3448'); px(4,-32,3,18,'#4a4258');
-    px(-7,-32,14,3,'#5a4a2a'); // 学者披肩
-    px(-5,-42,10,10,'#c9a98c'); // 脸
-    px(-5,-45,10,5,'#4a3a2a'); // 短发
+    px(-7,-32,14,3,'#5a4a2a');
+    px(-5,-42,10,10,'#c9a98c');
+    px(-5,-45,10,5,'#4a3a2a');
     px(-3,-38,2,2,'#2a2018');px(1,-38,2,2,'#2a2018');
-    // 匕首助攻
     px(6,-26,7,2,'#c8c4b4');
     if(c.atkT>0){ ctx.strokeStyle='rgba(220,220,200,0.5)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(4,-24,12,-0.5,0.8);ctx.stroke(); }
   }
   ctx.restore();
+}
+
+function drawPunkOpheliaLayer(){
+  const po=level&&level.punkOphelia; if(!po) return;
+  ctx.save(); ctx.translate(po.x, GROUND_TOP); ctx.scale(po.dir||1,1); ctx.globalAlpha=0.92;
+  drawOpheliaFigure('punk', frame, false);
+  ctx.restore();
+}
+
+function drawGhostOpheliaFinale(){
+  if(!ghostOpheliaFinale || !boss || boss.kind!=='claudius') return;
+  const gx=boss.x+boss.w/2-58+Math.sin(frame*0.04)*10, gy=GROUND_TOP;
+  ctx.save(); ctx.translate(gx, gy); drawOpheliaFigure('ghost', frame, false); ctx.restore();
 }
 
 // Boss 绘制分发（按 kind）：克劳迪奥 / 恶灵老王 / 小丑波洛涅斯 / 英格兰刺客 / 雷欧提斯
@@ -1530,7 +1597,7 @@ function buildAct(idx){
     appendBossArena(lv,'clown',{completesLevel:true});
   } else if(idx===ACT_ESCAPE){ // 第三幕 逃亡 —— 疯朋克奥菲莉亚背景游荡；关底双人小 Boss 罗森格兰兹/吉尔登斯顿；后段彩蛋入口
     lv=buildStandard({seed:303, width:6200, enemies:['patrol','archer','shield','skeleton'], enemyChance:0.6, pitBase:0.16, pitHazard:'poison', elite:true});
-    lv.punkOphelia={ baseX:lv.width*0.22, x:lv.width*0.22, phase:0, lineT:150, lineI:0 };
+    lv.punkOphelia={ baseX:lv.width*0.22, x:lv.width*0.22, phase:0, lineT:90, lineI:0, dir:1 };
     lv.triggers.push({x:lv.width*0.55, y:GROUND_TOP-120, w:60, h:120, type:'egghint', fired:false, key:'egghint'});
     lv.segments=[{x:0,name:'宫廷走廊'},{x:lv.width/3,name:'仓皇出逃'},{x:lv.width*2/3,name:'旧友的埋伏 →'}];
     appendBossArena(lv,'rosencrantz',{});
@@ -1845,9 +1912,9 @@ const STORY = {
   ],
   laertes_saved:[
     { act:'ACT V · 决斗', title:'替你挡下的毒剑', portrait:5, lines:[
-      { zh:'雷欧提斯的毒剑刺向哈姆雷特要害——奥菲莉亚扑身而上，用短刃挡开了那致命一击！' },
+      { zh:'雷欧提斯的毒剑刺向哈姆雷特要害——奥菲莉亚以实体扑身保护，用短刃挡开毒锋，却被剑尖划伤倒下。' },
       { zh:'奥菲莉亚：“我不会再让你离开我。去吧，把该结束的了结。”', speak:true },
-      { zh:'哈姆雷特毫发无伤，直取王座。' }
+      { zh:'哈姆雷特毫发无伤，奥菲莉亚倒在花瓣与暗紫皮革之间；她的灵魂将随你直面王座。' }
     ]}
   ],
   laertes_lost:[
@@ -1899,6 +1966,7 @@ const BOSS_INTRO = {
     { zh:'王座之上，克劳迪奥缓缓起身，握紧毒剑。' },
     { zh:'克劳迪奥：“我的罪孽腥臭熏天，直冲云霄。”', speak:true,
       en:'“O, my offence is rank, it smells to heaven.”' },
+    { zh:'若奥菲莉亚已替哈姆雷特挡剑，她将以蓝白亡魂之姿浮现，与弑君者同归于尽。' },
     { zh:'哈姆雷特：“恶贼，受死！为我父亲，为丹麦！”', speak:true }
   ]}]
 };
@@ -2179,6 +2247,8 @@ function loadLevel(idx, keepScore){
   player=makePlayer(level.playerStart.x, level.playerStart.y);
   if(!hasBow) player.ammo=0;
   companion=null;
+  if(idx!==ACT_FINAL){ opheliaWounded=false; ghostOpheliaFinale=false; }
+  else { ghostOpheliaFinale=false; }
   // 湖边彩蛋成功后，奥菲莉亚在英格兰幕与终章全程助战
   if((idx===ACT_ENGLAND||idx===ACT_FINAL) && opheliaSaved){ companion=makeCompanion('ophelia'); }
   boss=null; bossStarted=false; activeBossEntry=null; poisonT=0;
@@ -2368,7 +2438,7 @@ function updatePlayer(){
   // 攻击
   if(atkEdge && p.atkCd<=0 && p.hurtT<=0){
     if(p.energy>=p.maxEnergy && bossStarted){ ultAttack(); }
-    else { p.atkT=12; p.atkCd=22; p._swingHits=new Set(); p.pose.type='atk'; p.pose.frame=0; Sound.swing(); }
+    else { p.atkT=12; p.atkCd=22; p._swingHits=new Set(); p.pose.type='atk'; p.pose.frame=0; Sound.battleCue('hamletAttack'); }
   }
   if(p.atkT>0){ doMelee(); }
   // 远程
@@ -2619,6 +2689,7 @@ function updateCompanion(){
   // 助攻：向最近敌人/Boss 射光
   if(c.shootCd>0)c.shootCd--;
   if(c.atkT>0)c.atkT--;
+  if(opheliaWounded) return;
   let tgt=null, td=1e9;
   for(const e of enemies){ if(e.dying)continue; const dd=dist(e.x,e.y,c.x,c.y); if(dd<300&&dd<td){td=dd;tgt=e;} }
   if(boss&&!boss.dead){ const dd=dist(boss.x,boss.y,c.x,c.y); if(dd<340&&dd<td){td=dd;tgt=boss;} }
@@ -2638,11 +2709,17 @@ function startBoss(entry){
   const D=boss.def;
   let mus = D.music || 'boss';
   if(entry.final) mus = opheliaSaved?'hero':'boss';
+  if(entry.final){
+    ghostOpheliaFinale = opheliaSaved && opheliaWounded;
+    if(ghostOpheliaFinale){ companion=null; Sound.characterCue('ghostOphelia'); }
+  }
   Sound.setMusic(mus, 1.1);
   const intro = BOSS_INTRO[entry.kind] || [];
   showStory(intro, ()=>{
     state=STATE.PLAY;
     addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · '+D.name, ACTS[actIndex].accent||'#e8c25a', 16);
+    const cue={ghostking:'ghost', clown:'clown', assassin:'assassin', laertes:'laertes', claudius:'claudius'}[entry.kind];
+    if(cue) Sound.characterCue(cue);
     showBossGuide();
   });
 }
@@ -2663,7 +2740,12 @@ function damageBoss(dmg, fromX, ranged){
   boss.hp-=dmg; boss.hitFlash=6; boss.invuln=6;
   boss.vx=(boss.x+boss.w/2>fromX?1:-1)*1.5;
   spark(boss.x+boss.w/2, boss.y+boss.h*0.4, boss.x+boss.w/2>fromX?1:-1, '#ffb0b0');
-  shake(3,6); Sound.bossHit();
+  shake(3,6);
+  if(boss.kind==='ghostking') Sound.battleCue('ghostHit');
+  else if(boss.kind==='clown') Sound.battleCue('clownHit');
+  else if(boss.kind==='laertes') Sound.battleCue('laertesStrike');
+  else if(boss.kind==='claudius') Sound.battleCue('claudiusHeavy');
+  else Sound.bossHit();
   player.energy=Math.min(player.maxEnergy, player.energy+ (ranged?3:5));
   const ratio=boss.hp/boss.maxHp, ph=boss.phases;
   if(ph>=3){
@@ -2696,6 +2778,10 @@ function updateBoss(){
   if(!boss) return;
   const b=boss, D=b.def;
   if(b.hitFlash>0)b.hitFlash--; if(b.invuln>0)b.invuln--;
+  if(ghostOpheliaFinale && b.kind==='claudius' && frame%96===0){
+    b.hp=Math.max(0,b.hp-5); b.hitFlash=8; Sound.battleCue('ghostOpheliaAttack'); ripple(b.x+b.w/2, b.y+b.h*0.45); addFloater(b.x+b.w/2, b.y-18, '亡魂奥菲莉亚助战', '#bfe4ff', 12);
+    if(b.hp<=0){ onBossDefeated(); return; }
+  }
   if(b.dead){ b.deathT--; return; }
   const px=player.x+player.w/2, ex=b.x+b.w/2;
   b.facing=px<ex?-1:1;
@@ -2786,6 +2872,7 @@ function onBossDefeated(){
     return;
   }
   if(entry && entry.final){            // 终章最终 Boss 克劳迪奥：进入结局
+    if(ghostOpheliaFinale){ Sound.battleCue('ghostOpheliaVanish'); }
     Sound.jingle(opheliaSaved?'epicwin':'somber');
     setTimeout(()=>{ startEnding(); }, 1600);
     return;
@@ -2815,10 +2902,15 @@ function onLaertesDefeated(){
       boss=null; activeBossEntry=null;          // 清除中段 Boss，玩家前进即可触发克劳迪奥
       if(!opheliaSaved){
         poisonT = 60*45;                         // 未救到：中毒 45 秒倒计时
+        dom.timerRow.style.display='block';
         addFloater(player.x, player.y-34, '☠ 中毒！45 秒内击败克劳迪奥', '#9bff6a', 15);
         Sound.setMusic('imperial', 1.2);
       } else {
-        addFloater(player.x, player.y-34, '奥菲莉亚为你挡下了毒剑！', '#ffd0e6', 15);
+        opheliaWounded=true;
+        if(companion){ companion.hp=1; companion.active=true; companion.atkT=0; }
+        for(let i=0;i<24;i++) spawnPetal(player.x+rand(-80,80), player.y-rand(0,70), '#d85a9a');
+        addFloater(player.x, player.y-34, '奥菲莉亚受伤倒下，亡魂将随你进王座', '#ffd0e6', 15);
+        Sound.characterCue('ghostOphelia');
         Sound.setMusic('hero', 1.2);
       }
     });
@@ -2957,8 +3049,8 @@ function showLevelName(name, en){
    24. 结局（分支：成功=金色英雄 / 失败=暗紫缺憾）
    ------------------------------------------------------------------------- */
 let ending=null;
-const ENDING_TEXT_WIN = '丹麦的黑暗终于散去，哈姆雷特以父之名完成复仇，奥菲莉亚重获新生，两人并肩站在曙光中——这是命运给予的，唯一一次温柔。';
-const ENDING_TEXT_LOSE = '复仇已成，但代价是她。丹麦的王冠染满鲜血，胜利的哈姆雷特站在空荡荡的王座前，那个名字，他再也没能说出口。';
+const ENDING_TEXT_WIN = '毒剑之后，奥菲莉亚的蓝白亡魂从王座阴影中浮现，缠住克劳迪奥，与弑君者同归于尽。哈姆雷特完成复仇，也倒在毒与伤痕之中；三具尸身横陈，丹麦只剩霍拉旭讲述真相。';
+const ENDING_TEXT_LOSE = '奥菲莉亚已沉入湖底。雷欧提斯的毒在哈姆雷特血脉中扩散，他带毒冲入王座厅，与克劳迪奥决战到底。复仇完成，哈姆雷特与弑君者双双倒下。';
 const ENDING_QUOTE_WIN = { en:'Good night, sweet prince: and flights of angels sing thee to thy rest.', zh:'晚安，亲爱的王子，愿成群的天使用歌声送你安息。' };
 const ENDING_QUOTE_LOSE = { en:'The rest is silence.', zh:'其余皆是沉默。' };
 
@@ -2997,7 +3089,7 @@ function showStats(){
   const rating=computeRating();
   const q= win?ENDING_QUOTE_WIN:ENDING_QUOTE_LOSE;
   const titleEl=dom.winScreen.querySelector('.title');
-  titleEl.textContent = win? '终 · 曙光结局' : '终 · 缺憾结局';
+  titleEl.textContent = win? '终 · 原著悲剧（三死）' : '终 · 沉默悲剧（双死）';
   titleEl.style.color = win? '#e8c25a' : '#b98bff';
   titleEl.style.textShadow = win? '3px 3px 0 #000,0 0 24px rgba(232,194,90,.5)' : '3px 3px 0 #000,0 0 24px rgba(185,139,255,.5)';
   dom.winQuote.innerHTML = '「'+q.en+'」<br><span style="color:'+(win?'#c4b98f':'#a892c4')+'">'+q.zh+'</span>';
@@ -3085,12 +3177,22 @@ function updatePlay(){
 // 第三幕背景：疯癫朋克奥菲莉亚缓慢游荡 + 疯话
 function updatePunkOphelia(){
   const po=level.punkOphelia; if(!po) return;
-  po.phase+=0.02;
-  po.x = po.baseX + Math.sin(po.phase)*70;
-  po.lineT--; if(po.lineT<=0){ po.lineT=280;
-    const madLines=['他死了，去了，小姐……','这是三色堇，是为了思念。','明天是圣瓦伦丁节……','他不会回来了吗？'];
+  po.phase+=0.012;
+  const span=Math.max(420, level.width*0.72);
+  const nextX = po.baseX + (Math.sin(po.phase)*0.5+0.5)*span;
+  po.dir = nextX>=po.x ? 1 : -1;
+  po.x = nextX;
+  po.lineT--; if(po.lineT<=0){ po.lineT=220;
+    const madLines=[
+      {zh:'他死了，去了，小姐……', en:'He is dead and gone, lady.'},
+      {zh:'这是迷迭香，是为了记忆。', en:'There\'s rosemary, that\'s for remembrance.'},
+      {zh:'明天是圣瓦伦丁节……', en:'Tomorrow is Saint Valentine\'s day.'},
+      {zh:'晚安，女士们；晚安。', en:'Good night, ladies; good night.'},
+      {zh:'他不会回来了吗？', en:'And will he not come again?'}
+    ];
     po.lineI=(po.lineI+1)%madLines.length;
-    if(Math.abs(po.x-player.x)<VW*0.7){ addFloater(po.x, GROUND_TOP-90, madLines[po.lineI], '#d6a8e8', 12); Sound.punkGlitch(); }
+    const screenX=(po.x-camX)*ZOOM;
+    if(screenX>W*0.34 && screenX<W*0.66){ const line=madLines[po.lineI]; addFloater(po.x, GROUND_TOP-92, line.zh+' / '+line.en, '#d85a9a', 11); Sound.battleCue('punkLaugh'); }
   }
 }
 
@@ -3145,6 +3247,7 @@ function render(){
     drawForeground();
     // 屏幕闪光
     if(flashT>0){ ctx.fillStyle=flashColor; ctx.globalAlpha=clamp(flashT/16,0,1); ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; }
+    if(poisonT>0) drawPoisonSpreadOverlay();
     // Boss 血条 & 能量条
     if(bossStarted && boss && !boss.dead) drawBossBar();
     if(bossStarted && player && !player.dead) drawEnergyBar();
@@ -3169,6 +3272,8 @@ function drawWorld(){
   // 落石
   for(const r of rocks){ if(r.warn>0){ ctx.fillStyle='rgba(255,80,80,'+(0.3+0.3*Math.sin(frame*0.4))+')'; ctx.fillRect(r.x, GROUND_TOP-140, r.w, 6); ctx.fillStyle='rgba(255,120,120,0.6)'; ctx.font='12px serif'; ctx.textAlign='center'; ctx.fillText('!', r.x+r.w/2, GROUND_TOP-130); }
     ctx.fillStyle='#6a5a52'; ctx.fillRect(r.x,r.y,r.w,r.h); ctx.fillStyle='#4a3e38'; ctx.fillRect(r.x+3,r.y+3,r.w-6,r.h-6); }
+  // 独立背景角色层：第三幕朋克奥菲莉亚只游走不碰撞
+  drawPunkOpheliaLayer();
   // 抛射物
   for(const pr of projectiles){ drawProjectile(pr); }
   // 敌人
@@ -3176,7 +3281,7 @@ function drawWorld(){
   // 随从
   if(companion && companion.active) drawCompanion(companion);
   // Boss
-  if(boss && !boss.dead) drawBoss(boss);
+  if(boss && !boss.dead){ drawGhostOpheliaFinale(); drawBoss(boss); }
   else if(boss && boss.dead && boss.deathT>0){ ctx.save(); ctx.globalAlpha=clamp(boss.deathT/120,0,1); drawBoss(boss); ctx.restore(); }
   // 玩家
   if(player && !player.dead){ drawPlayerWorld(); }
@@ -3273,6 +3378,15 @@ function drawForeground(){
   drawSegmentBanner();
 }
 function worldToScreen(wx,wy){ return { x:(wx-camX)*ZOOM, y:(wy-camY)*ZOOM }; }
+function drawPoisonSpreadOverlay(){
+  const ratio=clamp(poisonT/(60*45),0,1), danger=1-ratio;
+  ctx.save();
+  ctx.strokeStyle='rgba(155,255,106,'+(0.18+danger*0.35)+')'; ctx.lineWidth=2;
+  for(let i=0;i<7;i++){ const y=H*(0.18+i*0.11)+Math.sin(frame*0.04+i)*8; ctx.beginPath(); ctx.moveTo(0,y); for(let x=0;x<W;x+=70) ctx.lineTo(x,y+Math.sin(frame*0.06+x*0.02+i)*10); ctx.stroke(); }
+  const g=ctx.createRadialGradient(W/2,H/2,H*0.2,W/2,H/2,H*0.8); g.addColorStop(0,'rgba(80,180,60,0)'); g.addColorStop(1,'rgba(80,180,60,'+(0.12+danger*0.22)+')'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(155,255,106,0.88)'; ctx.font='bold 13px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('毒素扩散 · '+Math.ceil(poisonT/60)+'s', W/2, 118);
+  ctx.restore();
+}
 let curSeg=-1;
 function drawSegmentBanner(){
   if(!level.segments||state!==STATE.PLAY) return;
@@ -3352,23 +3466,13 @@ function drawEndingScene(){
   for(let i=0;i<3;i++) ctx.fillRect(W/2-30+i*24,H-250,10,24);
   // 中央光/尘
   if(win){ const lg=ctx.createRadialGradient(W/2,H*0.3,10,W/2,H*0.3,220); lg.addColorStop(0,'rgba(255,240,190,'+(0.3+0.1*Math.sin(frame*0.05))+')'); lg.addColorStop(1,'rgba(255,240,190,0)'); ctx.fillStyle=lg; ctx.fillRect(0,0,W,H); }
-  // 人物剪影（哈姆雷特 + 同伴）
+  // 人物剪影：双线均为悲剧，生还线三死，溺死线哈姆雷特与克劳迪奥双死
   const gy=H-104;
-  drawHamletOn(ctx, W/2-30, gy, 2.6, 4);
-  // 同伴
-  ctx.save(); ctx.translate(W/2+34, gy);
-  if(win){ // 奥菲莉亚
-    ctx.fillStyle='#a8d0e8'; ctx.beginPath();ctx.moveTo(-14,-30);ctx.lineTo(14,-30);ctx.lineTo(20,0);ctx.lineTo(-20,0);ctx.closePath();ctx.fill();
-    ctx.fillStyle='#a8d0e8'; ctx.fillRect(-10,-56,20,26);
-    ctx.fillStyle='#c9a24a'; ctx.fillRect(-11,-78,22,20);
-    ctx.fillStyle='#f0d8b0'; ctx.fillRect(-9,-74,18,14);
-    ctx.fillStyle='#3a2a20'; ctx.fillRect(-5,-68,3,3); ctx.fillRect(3,-68,3,3);
-  } else { // 霍拉旭扶住
-    ctx.fillStyle='#3a3448'; ctx.fillRect(-10,-56,20,56);
-    ctx.fillStyle='#c9a98c'; ctx.fillRect(-9,-74,18,18);
-    ctx.fillStyle='#4a3a2a'; ctx.fillRect(-9,-78,18,6);
-  }
-  ctx.restore();
+  ctx.save(); ctx.translate(W/2-46, gy+10); ctx.rotate(-0.92); drawHamletOn(ctx, 0, 0, 2.2, ACT_FINAL); ctx.restore();
+  ctx.save(); ctx.translate(W/2+44, gy+8); ctx.rotate(0.82);
+  ctx.fillStyle= win?'#5a1420':'#4a1428'; ctx.fillRect(-16,-58,32,58); ctx.fillStyle='#e8c25a'; ctx.fillRect(-18,-64,36,6); ctx.fillStyle='#b89878'; ctx.fillRect(-10,-80,20,16); ctx.restore();
+  if(win){ ctx.save(); ctx.translate(W/2, gy-2); drawOpheliaFigure('ghost', frame, false); ctx.restore(); }
+  else { ctx.save(); ctx.globalAlpha=.42; ctx.translate(W/2+6, gy-20); drawOpheliaFigure('ghost', frame, false); ctx.restore(); }
   // 花瓣/落叶
   drawParticlesScreen();
   // 文本
@@ -3406,7 +3510,7 @@ async function startGame(){
   await ensurePlayerProfile();
   Sound.unlock();
   score=0; comboCount=0; comboTimer=0; stats={time:0,kills:0,boxes:0,secrets:0};
-  opheliaSaved=true; hasBow=false; darkMode=false;
+  opheliaSaved=true; hasBow=false; darkMode=false; opheliaWounded=false; ghostOpheliaFinale=false;
   dom.scoreVal.textContent='0';
   show(dom.hud); show(dom.scorePanel); show(dom.muteBtn); show(dom.ctrlHint); show(dom.dlgBar);
   hideAllOverlays();
