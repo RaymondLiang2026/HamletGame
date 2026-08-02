@@ -2157,24 +2157,30 @@ function buildBonusLevel(bonusAct){
   const n=bonusAct;
   const lv={ width:1800, height:LEVEL_H, groundTop:GROUND_TOP,
     platforms:[], hazards:[], movers:[], breakables:[], chests:[], enemySpawns:[], checkpoints:[], triggers:[], pickups:[], rockEmitters:[],
-    segments:[{x:0,name:'隐藏挑战（可选）'}], goalX:1640, playerStart:{x:70,y:GROUND_TOP}, completeMode:'bonus', bonusAct:n };
+    segments:[{x:0,name:'隐藏挑战（可选）'}], goalX:1640, playerStart:{x:70,y:GROUND_TOP}, completeMode:'bonus', bonusAct:n, bonusFinished:false };
   if(bonusAct===1){
-    lv.width=900; lv.height=980; lv.goalX=470; lv.playerStart={x:80,y:GROUND_TOP};
-    lv.platforms.push({x:0,y:GROUND_TOP,w:220,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    for(let i=0;i<9;i++){ lv.platforms.push({x:120+(i%2)*210,y:GROUND_TOP-70-i*74,w:86,h:14,type:'plat'}); }
-    lv.platforms.push({x:380,y:GROUND_TOP-760,w:180,h:16,type:'plat',board:true});
+    lv.width=940; lv.height=980; lv.goalX=492; lv.playerStart={x:80,y:GROUND_TOP};
+    lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    const steps=[
+      [126,68,96],[260,136,98],[142,204,104],[274,272,108],[154,340,108],
+      [286,408,112],[176,476,112],[308,544,116],[218,612,118],[344,680,122]
+    ];
+    steps.forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:s[2],h:14,type:'plat'}));
+    lv.platforms.push({x:448,y:GROUND_TOP-748,w:190,h:16,type:'plat',board:true});
   } else if(bonusAct===2){
-    lv.width=2300; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    for(let i=0;i<8;i++){ lv.enemySpawns.push({type:i%2?'shield':'patrol',x:360+i*210,y:GROUND_TOP}); }
+    lv.width=2100; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    ['patrol','patrol','shield','patrol','shield'].forEach((type,i)=>lv.enemySpawns.push({type,x:420+i*260,y:GROUND_TOP}));
+    lv.pickups.push({x:760,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
+    lv.pickups.push({x:1320,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
     lv.pickups.push({x:lv.width-180,y:GROUND_TOP-18,w:12,h:12,kind:'bonusCoin',taken:false});
   } else if(bonusAct===3){
-    lv.width=2600; lv.platforms.push({x:0,y:GROUND_TOP,w:210,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.platforms.push({x:lv.width-260,y:GROUND_TOP,w:260,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    lv.hazards.push({x:210,y:GROUND_TOP+10,w:lv.width-470,h:LEVEL_H-GROUND_TOP,type:'spike'});
-    for(let i=0;i<12;i++){ lv.movers.push({x:310+i*160,y:GROUND_TOP-45-(i%3)*32,w:58,h:12,type:'plat',axis:'y',range:34,speed:1.2,phase:i*.7,baseX:310+i*160,baseY:GROUND_TOP-45-(i%3)*32}); }
+    lv.width=2520; lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.platforms.push({x:lv.width-300,y:GROUND_TOP,w:300,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.hazards.push({x:230,y:GROUND_TOP+10,w:lv.width-530,h:LEVEL_H-GROUND_TOP,type:'spike'});
+    for(let i=0;i<13;i++){ lv.movers.push({x:330+i*150,y:GROUND_TOP-42-(i%3)*26,w:76,h:12,type:'plat',axis:'y',range:24,speed:0.82,phase:i*.55,baseX:330+i*150,baseY:GROUND_TOP-42-(i%3)*26}); }
     lv.deaths=0;
   } else if(bonusAct===4){
     lv.width=1900; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    [[260,260],[260,110],[520,110],[520,260],[780,260],[780,70],[1040,70],[1040,220],[1320,220],[1320,120]].forEach(w=>lv.platforms.push({x:w[0],y:GROUND_TOP-w[1],w:34,h:w[1],type:'ground'}));
+    [[250,70,116],[420,130,120],[600,190,126],[790,130,120],[970,70,116],[1135,128,124],[1325,186,130],[1515,124,126]].forEach(w=>lv.platforms.push({x:w[0],y:GROUND_TOP-w[1],w:w[2],h:14,type:'plat'}));
   } else {
     lv.width=960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.goalX=760; lv.monologue={t:0,typed:0,done:false,fade:0};
   }
@@ -2188,6 +2194,11 @@ function createBonusEntrance(lv, mainAct){
 function saveBonusReturn(){
   return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats) };
 }
+function restoreMainMusic(){
+  let mus=ACTS[actIndex]?ACTS[actIndex].music:'castle';
+  if(actIndex===ACT_FINAL) mus=opheliaSaved?'hero':'imperial';
+  Sound.setMusic(mus, 1);
+}
 function enterBonus(actNumber){
   if(bonusLevel) return;
   bonusReturn=saveBonusReturn(); bonusLevel={act:actNumber, kind:BONUS_TITLES[actNumber-1]};
@@ -2200,13 +2211,17 @@ function enterBonus(actNumber){
 }
 function exitBonus(success){
   const saved=bonusReturn; const done=bonusLevel;
+  if(!saved) return;
   bonusLevel=null; bonusReturn=null; hide(dom.messageBoard);
+  keys.left=keys.right=keys.jump=keys.attack=keys.ranged=false;
+  jumpEdge=atkEdge=rangedEdge=false;
   loadLevel(saved.actIndex, true);
   score=saved.score; stats=saved.stats; dom.scoreVal.textContent=score;
-  respawn={x:saved.respawn.x,y:saved.respawn.y}; player=makePlayer(saved.respawn.x, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.invuln=90;
+  respawn={x:saved.respawn.x,y:saved.respawn.y}; player=makePlayer(saved.respawn.x, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.vx=0; player.vy=0; player.invuln=90;
   camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
-  state=STATE.PLAY; updateHUD();
+  state=STATE.PLAY; goalReached=false; restoreMainMusic(); updateHUD();
   if(success && done) addFloater(player.x+player.w/2, player.y-35, '支线完成：'+done.kind, '#e8c25a', 14);
+  else addFloater(player.x+player.w/2, player.y-35, '已返回主线检查点', '#c9b06a', 14);
 }
 
 function makePlayer(x,y){
@@ -3197,10 +3212,11 @@ function updatePunkOphelia(){
 }
 
 function finishBonus(){
-  if(!bonusLevel) return;
+  if(!bonusLevel || level.bonusFinished) return;
+  level.bonusFinished=true;
   const act=bonusLevel.act;
-  if(act===2) addScore(500);
-  if(act===3) addScore(1800);
+  if(act===2) addScore(350);
+  if(act===3) addScore(1400);
   if(act===4) Dialog.push([DL('left','哈姆雷特','海雾也有出口，心中的迷宫亦然。')]);
   openMessageBoard(act, BONUS_TITLES[act-1], act===1 ? '你是第'+(Number(localStorage.getItem('hamlet_peak_count')||0)+1)+'个到达顶峰' : '留下这一关的挑战记录。');
   if(act===1) localStorage.setItem('hamlet_peak_count', String(Number(localStorage.getItem('hamlet_peak_count')||0)+1));
@@ -3530,7 +3546,13 @@ dom.muteBtn.addEventListener('click', ()=>{ Sound.unlock(); const on=Sound.toggl
 dom.messageSubmitBtn.addEventListener('click', submitMessage);
 dom.messageCloseBtn.addEventListener('click', closeMessageBoard);
 dom.messageInput.addEventListener('input', updateMessageMeta);
-window.addEventListener('keydown', e=>{ if(e.code==='Escape' && bonusLevel){ if(state==='messageBoard') closeMessageBoard(); else exitBonus(false); } });
+window.addEventListener('keydown', e=>{
+  if(e.code==='Escape' && bonusLevel){
+    e.preventDefault(); e.stopPropagation();
+    if(state==='messageBoard') exitBonus(true);
+    else exitBonus(false);
+  }
+}, true);
 // 结局推进：点击画布 / 回车
 canvas.addEventListener('click', ()=>{ if(state==='ending') endingProceed(); });
 window.addEventListener('keydown', e=>{ if((e.code==='Enter'||e.code==='Space') && state==='ending'){ endingProceed(); } });
