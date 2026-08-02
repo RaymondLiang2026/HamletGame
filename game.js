@@ -3237,7 +3237,9 @@ function buildBonusLevel(bonusAct){
     [[RX,66],[LX,132],[RX,198],[LX,264],[RX,330],[LX,396],[RX,462]].forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:PW,h:14,type:'plat'}));
     lv.platforms.push({x:700,y:GROUND_TOP-528,w:400,h:16,type:'plat',board:true}); // 顶点特效区
     // 决战前的独白：进入后先播放一段全屏戏剧演出，结束/跳过后再开始登高
-    lv.monologue={ t:0, line:0, lineT:0, fade:0, walk:0, facing:1, ending:false, done:false, skipped:false, skipRect:null };
+    lv.monologue={ t:0, line:0, lineT:0, fade:0, walk:0, facing:1, ending:false, done:false, skipped:false, skipRect:null,
+      px:W*0.5, walkDir:1, stepT:0, phase:0, phaseT:0, turnScale:1,
+      pose:_monoBasePose(), smoke:_monoInitSmoke(), headX:W*0.5, headTopY:H*0.28 };
   }
   placeBonusExitPortal(lv, bonusAct);
   return lv;
@@ -4477,11 +4479,35 @@ function updateBonusPlay(){
   updateCamera();
   if(++hudTick%4===0) updateHUD();
 }
+// 独白动作阶段时长（帧）：0踱步 1站定 2蹲下 3起身 4抬手独白 5转身
+const MONO_PHASE_DUR=[160,50,72,58,132,46];
 function updateBonusMonologue(){
   const m=level.monologue; if(!m||m.done) return;
   m.t++;
-  m.walk += 0.016;                      // 踱步驱动
-  m.facing = Math.cos(m.walk)>=0 ? 1 : -1;
+  m.walk += 0.016;                      // 兼容旧字段
+  // —— 烟雾缓慢横移（确定性漂移，避免每帧乱跳位置由 spd 决定）——
+  if(m.smoke){ for(const s of m.smoke){ s.x+=s.spd; if(s.x<-180) s.x=W+180; else if(s.x>W+180) s.x=-180; } }
+  // —— 骨骼动作状态机 ——
+  m.phaseT++;
+  if(m.phase===0){                       // 踱步：横向移动 + 步频推进
+    m.stepT+=0.135;
+    m.px+=m.walkDir*0.95;
+    if(m.px>W*0.63){ m.px=W*0.63; m.walkDir=-1; }
+    else if(m.px<W*0.37){ m.px=W*0.37; m.walkDir=1; }
+    m.facing=m.walkDir;
+  }
+  if(m.phase===5){                       // 转身：收窄 scaleX，中点翻面
+    const p=clamp(m.phaseT/MONO_PHASE_DUR[5],0,1);
+    m.turnScale=0.28+0.72*Math.abs(Math.cos(p*Math.PI));
+    if(m.phaseT===((MONO_PHASE_DUR[5]/2)|0)) m.facing*=-1;
+  } else {
+    m.turnScale+=(1-m.turnScale)*0.2;
+  }
+  if(m.phaseT>=MONO_PHASE_DUR[m.phase]){ m.phaseT=0; m.phase=(m.phase+1)%6; }
+  // —— 关节角度平滑插值到目标位姿 ——
+  const tp=_monoTargetPose(m), k=0.13;
+  for(const key in tp) m.pose[key]+=(tp[key]-m.pose[key])*k;
+  // —— 台词推进（沿用 m.t 计时，中英对照逐行）——
   const lines=ACT5_MONOLOGUE, introF=70, perLine=175;
   if(m.ending){ m.fade+=2.2; if(m.fade>=70) m.done=true; return; }
   if(m.t<introF) return;                // 开场聚光灯淡入
@@ -4607,120 +4633,322 @@ function drawBonusMonologueScene(){
   const endA=m.ending ? 1-clamp(m.fade/70,0,1) : 1;
   const alpha=clamp(introA*endA,0,1);
   if(alpha<=0) return;
-  const px=W*0.5 + Math.sin(m.walk)*W*0.11;      // 舞台踱步位置
+  const px=m.px;                                 // 舞台踱步位置（由动作状态机驱动）
   ctx.save(); ctx.setTransform(1,0,0,1,0,0);
   ctx.globalAlpha=alpha;
   ctx.fillStyle='#040408'; ctx.fillRect(0,0,W,H); // 戏剧黑场（全屏覆盖玩法层）
-  _monoBackdrop(m);
-  _monoSpotlight(m, px);
-  _monoHamlet(m, px);
-  _monoSubtitles(m, alpha);
+  _monoBackdrop(m);            // 层1 背景海报
+  _monoStage(m);               // 层2 NT Live 舞台场景
+  _monoSpotlight(m, px);       // 层3 聚光灯
+  _monoHamlet(m, px);          // 层4 骨骼哈姆雷特
+  _monoSubtitles(m, alpha);    // 层5 舞台对白框
   ctx.globalAlpha=1;
   _monoSkipButton(m);          // 右下角固定跳过（始终不透明、置于最上层）
   ctx.restore();
 }
-// 舞台背景：第五幕城堡 + 墓地夜景（月亮 / 城堡剪影 / 墓碑 / 薄雾）
+// 层1 背景海报：近黑舞台底色 + 强暗角 + 中央巨幅低饱和半透明卷福立绘（戏剧海报感）
 function _monoBackdrop(m){
   ctx.save();
   const bg=ctx.createLinearGradient(0,0,0,H);
-  bg.addColorStop(0,'#050506'); bg.addColorStop(0.48,'#09090b'); bg.addColorStop(1,'#0b0b0e');
+  bg.addColorStop(0,'#050506'); bg.addColorStop(0.5,'#08080b'); bg.addColorStop(1,'#0a0a0d');
   ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
-  const center=ctx.createRadialGradient(W*0.5,H*0.55,20,W*0.5,H*0.55,W*0.72);
-  center.addColorStop(0,'rgba(42,42,46,0.18)'); center.addColorStop(0.38,'rgba(18,18,21,0.08)'); center.addColorStop(1,'rgba(0,0,0,0.72)');
-  ctx.fillStyle=center; ctx.fillRect(0,0,W,H);
-  const floorY=H*0.78;
-  const floor=ctx.createLinearGradient(0,floorY,0,H);
-  floor.addColorStop(0,'rgba(24,25,28,0.34)'); floor.addColorStop(0.45,'rgba(16,17,19,0.42)'); floor.addColorStop(1,'rgba(5,5,6,0.94)');
-  ctx.fillStyle=floor; ctx.fillRect(0,floorY,W,H-floorY);
-  ctx.strokeStyle='rgba(130,136,145,0.045)'; ctx.lineWidth=1;
-  for(let y=floorY+10;y<H;y+=14){ ctx.beginPath(); ctx.moveTo(0,y+Math.sin(y*0.09)*1.5); ctx.lineTo(W,y); ctx.stroke(); }
-  ctx.fillStyle='rgba(220,225,230,0.025)';
-  for(let i=0;i<4;i++){ ctx.beginPath(); ctx.ellipse(W*0.5, floorY+22+i*22, W*(0.30+i*0.09), 4+i, 0, 0, 6.283); ctx.fill(); }
-  const vig=ctx.createRadialGradient(W*0.5,H*0.53,W*0.20,W*0.5,H*0.53,W*0.78);
-  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(0.62,'rgba(0,0,0,0.38)'); vig.addColorStop(1,'rgba(0,0,0,0.92)');
+  // 巨幅半透明向量立绘作为背景海报（放大至接近全屏高、低饱和 tint、不抢前景）
+  const warm=!!(typeof opheliaSaved!=='undefined' && opheliaSaved);
+  ctx.save();
+  ctx.globalAlpha=0.15;
+  ctx.filter='saturate(0.22) brightness(0.82) contrast(1.05)';
+  ctx.translate(W*0.5, H*0.5); ctx.scale(2.78,2.78);
+  drawVectorHamletPortrait(ctx, 4, warm, !warm);
+  ctx.restore();                         // 复位 filter 与 globalAlpha
+  // 单色调 tint 使海报融入舞台
+  ctx.globalAlpha=1;
+  ctx.fillStyle = warm?'rgba(30,24,12,0.30)':'rgba(13,15,26,0.32)';
+  ctx.fillRect(0,0,W,H);
+  // 强四周暗角
+  const vig=ctx.createRadialGradient(W*0.5,H*0.5,W*0.17,W*0.5,H*0.5,W*0.82);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(0.6,'rgba(0,0,0,0.42)'); vig.addColorStop(1,'rgba(0,0,0,0.95)');
   ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
   ctx.globalAlpha=1;
   ctx.restore();
 }
-// 聚光灯：从舞台顶部投向踱步中的哈姆雷特
+// 确定性伪随机（基于索引，保证道具位置逐帧稳定）
+function _srand(i){ const x=Math.sin(i*127.1+31.7)*43758.5453; return x-Math.floor(x); }
+// 独白烟雾粒子初始化
+function _monoInitSmoke(){
+  const a=[];
+  for(let i=0;i<7;i++){ const r=_srand(i*5+1);
+    a.push({ x:_srand(i*5+2)*W, y:H*(0.80+0.14*_srand(i*5+3)), r:70+r*70, spd:(0.12+_srand(i*5+4)*0.22)*(r<0.5?-1:1), seed:_srand(i*5+5)*6.283 }); }
+  return a;
+}
+// 层2 NT Live 舞台场景：透视木地板 + 玩具锡兵 + 侧幕帷幕 + 倒椅 + 地面烟雾
+function _monoStage(m){
+  ctx.save();
+  const floorY=H*0.74;
+  // —— 透视木地板 ——
+  const fg=ctx.createLinearGradient(0,floorY,0,H);
+  fg.addColorStop(0,'#241a12'); fg.addColorStop(0.5,'#1a120c'); fg.addColorStop(1,'#0b0705');
+  ctx.fillStyle=fg; ctx.fillRect(0,floorY,W,H-floorY);
+  // 纵向木板缝（向舞台深处收敛）
+  const vpx=W*0.5;
+  ctx.strokeStyle='rgba(64,46,30,0.45)'; ctx.lineWidth=1;
+  for(let i=-9;i<=9;i++){ const bx=W*0.5+i*66; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(vpx+(bx-vpx)*0.16, floorY); ctx.stroke(); }
+  // 横向板缝（近处间距大、远处密，透视）
+  ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=1.4;
+  for(let i=1;i<=8;i++){ const t=i/8; const y=floorY+(H-floorY)*t*t; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  // 木纹明暗
+  ctx.strokeStyle='rgba(120,92,58,0.10)'; ctx.lineWidth=1;
+  for(let i=0;i<18;i++){ const gy=floorY+_srand(i*2+11)*(H-floorY); const gx=_srand(i*2+12)*W; ctx.beginPath(); ctx.moveTo(gx-24,gy); ctx.quadraticCurveTo(gx,gy+2,gx+24,gy); ctx.stroke(); }
+  // —— 地面烟雾（frame 驱动、低 alpha 缓慢横移）——
+  if(m.smoke) for(const s of m.smoke){
+    const rr=s.r*(0.82+0.18*Math.sin(frame*0.011+s.seed));
+    const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,rr);
+    g.addColorStop(0,'rgba(150,152,162,0.06)'); g.addColorStop(0.6,'rgba(140,142,152,0.03)'); g.addColorStop(1,'rgba(140,142,152,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(s.x,s.y,rr,rr*0.5,0,0,6.283); ctx.fill();
+  }
+  // —— 散落玩具士兵（10~16 个，基于索引确定性分布，避开哈姆雷特脚下）——
+  const N=14;
+  for(let i=0;i<N;i++){
+    const rx=_srand(i*3+21), ry=_srand(i*3+22), rk=_srand(i*3+23);
+    let sxp=W*0.06+rx*W*0.88;
+    const syp=floorY+16+ry*(H-floorY-24);
+    if(Math.abs(sxp-m.px)<64){ sxp += (sxp<m.px?-1:1)*(64+rk*24); }
+    const scl=0.7+((syp-floorY)/(H-floorY))*0.7;          // 近大远小
+    _monoSoldier(sxp, syp, (9+rk*6)*scl, rk>0.62, i);
+  }
+  // —— 散乱道具：1~2 把倒下/歪斜的木椅 ——
+  _monoChair(W*0.19, floorY+ (H-floorY)*0.62, 1.35, 0.9);
+  _monoChair(W*0.83, floorY+ (H-floorY)*0.42, -0.32, 0.78);
+  // —— 侧幕/舞台帷幕（左右深色垂坠，带褶皱）——
+  _monoDrape(-1); _monoDrape(1);
+  ctx.restore();
+}
+// 单个玩具锡兵剪影（8~16px 高，站立或倒下）
+function _monoSoldier(x,y,h,fallen,i){
+  ctx.save(); ctx.translate(x,y);
+  ctx.fillStyle='rgba(0,0,0,0.42)'; ctx.beginPath(); ctx.ellipse(0,1,h*0.55,h*0.16,0,0,6.283); ctx.fill();
+  if(fallen) ctx.rotate(1.35+_srand(i+7)*0.3);
+  const col='#3c4a34', tin='#727d66';
+  ctx.fillStyle=tin; ctx.fillRect(-h*0.30,-h*0.14,h*0.60,h*0.14);   // 底座
+  ctx.fillStyle=col; ctx.fillRect(-h*0.17,-h*0.92,h*0.34,h*0.80);   // 身体
+  ctx.beginPath(); ctx.arc(0,-h*0.98,h*0.20,0,6.283); ctx.fill();    // 头（帽）
+  ctx.strokeStyle=tin; ctx.lineWidth=Math.max(0.8,h*0.06);           // 步枪
+  ctx.beginPath(); ctx.moveTo(h*0.17,-h*0.86); ctx.lineTo(h*0.17,-h*1.28); ctx.stroke();
+  ctx.restore();
+}
+// 倒下/歪斜的木椅剪影
+function _monoChair(x,y,rot,scl){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot); ctx.scale(scl,scl);
+  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0,4,34,7,0,0,6.283); ctx.fill();
+  ctx.strokeStyle='#160f09'; ctx.lineWidth=5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-20,0); ctx.lineTo(20,0); ctx.stroke();          // 座
+  ctx.beginPath(); ctx.moveTo(-20,0); ctx.lineTo(-24,-34); ctx.stroke();       // 靠背
+  ctx.beginPath(); ctx.moveTo(-14,-6); ctx.lineTo(-22,-34); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-16,0); ctx.lineTo(-18,26); ctx.moveTo(16,0); ctx.lineTo(18,26); ctx.stroke(); // 前腿
+  ctx.strokeStyle='rgba(90,66,40,0.5)'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(-20,-2); ctx.lineTo(20,-2); ctx.stroke();
+  ctx.restore();
+}
+// 侧幕帷幕（side=-1 左 / 1 右）：深色垂坠 + 褶皱明暗
+function _monoDrape(side){
+  ctx.save();
+  const dw=112, x0= side<0?0:W-dw;
+  const g=ctx.createLinearGradient(x0,0,x0+dw,0);
+  if(side<0){ g.addColorStop(0,'#0e0906'); g.addColorStop(0.7,'rgba(16,11,7,0.55)'); g.addColorStop(1,'rgba(16,11,7,0)'); }
+  else { g.addColorStop(0,'rgba(16,11,7,0)'); g.addColorStop(0.3,'rgba(16,11,7,0.55)'); g.addColorStop(1,'#0e0906'); }
+  ctx.fillStyle=g; ctx.fillRect(x0,0,dw,H);
+  for(let i=0;i<5;i++){
+    const fx=x0+ (side<0? 10+i*22 : dw-10-i*22);
+    ctx.strokeStyle='rgba(0,0,0,0.42)'; ctx.lineWidth=7;
+    ctx.beginPath(); ctx.moveTo(fx,0); ctx.quadraticCurveTo(fx+side*6,H*0.5,fx,H); ctx.stroke();
+    ctx.strokeStyle='rgba(96,74,52,0.10)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(fx+side*5,0); ctx.quadraticCurveTo(fx+side*11,H*0.5,fx+side*5,H); ctx.stroke();
+  }
+  ctx.restore();
+}
+// 通用光锥
+function _monoCone(topX,botX,topHalf,botHalf,tint,str){
+  const topY=-18, botY=H*0.94;
+  ctx.beginPath(); ctx.moveTo(topX-topHalf,topY); ctx.lineTo(topX+topHalf,topY);
+  ctx.lineTo(botX+botHalf,botY); ctx.lineTo(botX-botHalf,botY); ctx.closePath();
+  const g=ctx.createLinearGradient(topX,topY,botX,botY);
+  g.addColorStop(0,'rgba('+tint+','+str+')'); g.addColorStop(0.4,'rgba('+tint+','+(str*0.55)+')');
+  g.addColorStop(0.75,'rgba('+tint+','+(str*0.22)+')'); g.addColorStop(1,'rgba('+tint+',0.01)');
+  ctx.fillStyle=g; ctx.fill();
+}
+// 层3 聚光灯：主硬边聚光锥 + 地面光池 + 淡倒影 + 锥内尘埃，另加两束更弱侧光
 function _monoSpotlight(m, px){
   const warm=!!(typeof opheliaSaved!=='undefined' && opheliaSaved);
   const tint=warm?'255,242,205':'225,235,255';
-  const topX=W*0.5+(px-W*0.5)*0.32, topY=-18, footY=H*0.9, bottomY=H*0.96;
-  const topHalf=34, botHalf=138;
+  const footY=H*0.9, bottomY=H*0.96;
   ctx.save();
-  ctx.beginPath(); ctx.moveTo(topX-topHalf,topY); ctx.lineTo(topX+topHalf,topY);
-  ctx.lineTo(px+botHalf,bottomY); ctx.lineTo(px-botHalf,bottomY); ctx.closePath();
-  const cone=ctx.createLinearGradient(topX,topY,px,bottomY);
-  cone.addColorStop(0,'rgba('+tint+',0.34)'); cone.addColorStop(0.32,'rgba('+tint+',0.20)'); cone.addColorStop(0.72,'rgba('+tint+',0.09)'); cone.addColorStop(1,'rgba('+tint+',0.015)');
-  ctx.fillStyle=cone; ctx.fill();
-  ctx.beginPath(); ctx.moveTo(topX-13,topY); ctx.lineTo(topX+13,topY); ctx.lineTo(px+58,bottomY); ctx.lineTo(px-58,bottomY); ctx.closePath();
-  const core=ctx.createLinearGradient(topX,topY,px,bottomY);
-  core.addColorStop(0,'rgba(255,255,248,0.30)'); core.addColorStop(0.46,'rgba('+tint+',0.13)'); core.addColorStop(1,'rgba('+tint+',0.03)');
-  ctx.fillStyle=core; ctx.fill();
+  // 两束更弱侧光（丰富舞台层次）
+  _monoCone(W*0.26, px-46, 20, 96, tint, 0.09);
+  _monoCone(W*0.74, px+46, 20, 96, tint, 0.09);
+  // 主聚光锥
+  const topX=W*0.5+(px-W*0.5)*0.32;
+  _monoCone(topX, px, 34, 138, tint, 0.30);
+  // 亮核
+  _monoCone(topX, px, 13, 58, '255,255,248', 0.24);
+  // 地面光池 + 淡倒影
   const pool=ctx.createRadialGradient(px,footY,8,px,footY,125);
   pool.addColorStop(0,'rgba(255,255,245,0.64)'); pool.addColorStop(0.42,'rgba('+tint+',0.34)'); pool.addColorStop(1,'rgba('+tint+',0)');
   ctx.fillStyle=pool; ctx.beginPath(); ctx.ellipse(px,footY,132,25,0,0,6.283); ctx.fill();
   ctx.globalAlpha*=0.25; ctx.fillStyle='rgba('+tint+',0.42)'; ctx.beginPath(); ctx.ellipse(px,footY+31,82,11,0,0,6.283); ctx.fill();
   ctx.globalAlpha=1;
-  for(let i=0;i<14;i++){ const d=(frame*0.002+i*0.071)%1, x=topX+(px-topX)*d+Math.sin(frame*0.015+i)*34, y=topY+(bottomY-topY)*d; ctx.fillStyle='rgba('+tint+','+(0.025+0.025*Math.sin(frame*0.025+i))+')'; ctx.beginPath(); ctx.arc(x,y,1.1+(i%3)*0.35,0,6.283); ctx.fill(); }
+  // 锥内受光尘埃/烟尘
+  for(let i=0;i<16;i++){ const d=(frame*0.002+i*0.063)%1, x=topX+(px-topX)*d+Math.sin(frame*0.015+i)*34, y=-18+(bottomY+18)*d; ctx.fillStyle='rgba('+tint+','+(0.02+0.025*Math.sin(frame*0.025+i))+')'; ctx.beginPath(); ctx.arc(x,y,1.1+(i%3)*0.35,0,6.283); ctx.fill(); }
   ctx.restore();
 }
-// 大立绘哈姆雷特：约占画面 64% 高，踱步 + 转身动画
+// 基础站立位姿（关节角度，弧度）；角度约定：腿0向下+向前，躯干0向上+前倾，手臂0下垂+前摆
+function _monoBasePose(){
+  return { torso:0.02, head:0, thighF:0.06, shinF:-0.05, thighB:-0.06, shinB:-0.03,
+           shF:0.12, elF:0.12, shB:-0.12, elB:0.12 };
+}
+// 各动作阶段的目标位姿（状态机每帧插值逼近）
+function _monoTargetPose(m){
+  switch(m.phase){
+    case 0: {                              // 踱步：双腿交替、手臂反向摆动
+      const sw=Math.sin(m.stepT);
+      return { torso:0.08, head:-0.02,
+        thighF:0.05+0.48*sw,  shinF:-0.15-0.32*Math.max(0,sw),
+        thighB:0.05-0.48*sw,  shinB:-0.15-0.32*Math.max(0,-sw),
+        shF:0.15-0.48*sw, elF:0.32, shB:0.15+0.48*sw, elB:0.32 };
+    }
+    case 1: return { torso:0.03, head:0.0, thighF:0.06, shinF:-0.05, thighB:-0.06, shinB:-0.03, shF:0.12, elF:0.12, shB:-0.12, elB:0.12 }; // 站定
+    case 2: return { torso:0.46, head:0.28, thighF:0.86, shinF:-0.96, thighB:0.74, shinB:-1.06, shF:0.95, elF:0.95, shB:0.35, elB:0.62 }; // 蹲下俯身拾物
+    case 3: return { torso:0.10, head:0.04, thighF:0.10, shinF:-0.08, thighB:-0.08, shinB:-0.03, shF:0.20, elF:0.20, shB:-0.10, elB:0.18 }; // 起身
+    case 4: return { torso:-0.06, head:-0.19, thighF:0.05, shinF:-0.05, thighB:-0.09, shinB:-0.02, shF:1.34, elF:1.72, shB:-0.16, elB:0.14 }; // 抬手独白（掌心朝上、头微仰）
+    case 5: return _monoBasePose();        // 转身（narrow 由 turnScale 处理）
+    default: return _monoBasePose();
+  }
+}
+// 前向运动学：以髋为原点求各关节坐标
+function _monoFK(pose){
+  const thighLen=76, shinLen=80, torsoLen=132, headNeck=46, upperLen=54, foreLen=52, legSpread=11, shW=30;
+  const hipL={x:-legSpread,y:0}, hipR={x:legSpread,y:0};
+  const kneeF={x:hipR.x+Math.sin(pose.thighF)*thighLen, y:hipR.y+Math.cos(pose.thighF)*thighLen};
+  const footF={x:kneeF.x+Math.sin(pose.shinF)*shinLen, y:kneeF.y+Math.cos(pose.shinF)*shinLen};
+  const kneeB={x:hipL.x+Math.sin(pose.thighB)*thighLen, y:hipL.y+Math.cos(pose.thighB)*thighLen};
+  const footB={x:kneeB.x+Math.sin(pose.shinB)*shinLen, y:kneeB.y+Math.cos(pose.shinB)*shinLen};
+  const neck={x:Math.sin(pose.torso)*torsoLen, y:-Math.cos(pose.torso)*torsoLen};
+  const shC={x:Math.sin(pose.torso)*torsoLen*0.9, y:-Math.cos(pose.torso)*torsoLen*0.9};
+  const shoulderF={x:shC.x+shW*0.5, y:shC.y+4}, shoulderB={x:shC.x-shW*0.5, y:shC.y+4};
+  const elbowF={x:shoulderF.x+Math.sin(pose.shF)*upperLen, y:shoulderF.y+Math.cos(pose.shF)*upperLen};
+  const handF={x:elbowF.x+Math.sin(pose.elF)*foreLen, y:elbowF.y+Math.cos(pose.elF)*foreLen};
+  const elbowB={x:shoulderB.x+Math.sin(pose.shB)*upperLen, y:shoulderB.y+Math.cos(pose.shB)*upperLen};
+  const handB={x:elbowB.x+Math.sin(pose.elB)*foreLen, y:elbowB.y+Math.cos(pose.elB)*foreLen};
+  const headC={x:neck.x+Math.sin(pose.torso+pose.head)*headNeck, y:neck.y-Math.cos(pose.torso+pose.head)*headNeck};
+  return {hipL,hipR,kneeF,footF,kneeB,footB,neck,shC,shoulderF,shoulderB,elbowF,handF,elbowB,handB,headC};
+}
+// 层4 骨骼哈姆雷特：分段关节人物，随动作状态机做关键帧插值动画，聚光自上而下打光
 function _monoHamlet(m, px){
   const warm=!!(typeof opheliaSaved!=='undefined' && opheliaSaved);
-  const footY=H*0.9, bodyH=H*0.67, s=bodyH/398;
-  const bob=Math.sin(m.walk*2)*2.2;
-  const sx=m.facing*(0.58+0.42*Math.abs(Math.cos(m.walk)));  // 转身：收窄成侧身剪影
+  const footY=H*0.9;
+  const P=_monoFK(m.pose);
+  const maxFootY=Math.max(P.footF.y, P.footB.y);
+  const breath=Math.sin(frame*0.045)*1.4;      // 呼吸微动
+  const gold=warm?'#c8a24a':'#5a4a72';
+  const seg=(a,b,w,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=w; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); };
   ctx.save();
-  ctx.translate(px, footY+bob); ctx.scale(sx*s,s);
-  const gold=warm?'#8d6b2a':'#41344f', hi=warm?'rgba(255,232,175,0.48)':'rgba(210,220,255,0.38)';
-  // 腿与长靴
-  const legG=ctx.createLinearGradient(0,-185,0,0); legG.addColorStop(0,'#101014'); legG.addColorStop(1,'#020204'); ctx.fillStyle=legG;
-  ctx.fillRect(-24,-150,16,142); ctx.fillRect(8,-150,16,142); ctx.fillStyle='#050507'; ctx.fillRect(-35,-10,31,10); ctx.fillRect(4,-10,34,10);
-  // 军装主体：窄腰、方肩、长直线
-  const coat=ctx.createLinearGradient(0,-330,0,-55); coat.addColorStop(0,'#24242a'); coat.addColorStop(0.42,'#0b0b10'); coat.addColorStop(1,'#020204'); ctx.fillStyle=coat;
-  ctx.beginPath(); ctx.moveTo(-54,-286); ctx.lineTo(-36,-306); ctx.lineTo(36,-306); ctx.lineTo(54,-286); ctx.lineTo(34,-58); ctx.lineTo(9,-45); ctx.lineTo(0,-70); ctx.lineTo(-9,-45); ctx.lineTo(-34,-58); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,0.11)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,-300); ctx.lineTo(-3,-66); ctx.moveTo(-30,-286); ctx.lineTo(-20,-78); ctx.moveTo(30,-286); ctx.lineTo(20,-78); ctx.stroke();
-  ctx.fillStyle=gold; ctx.fillRect(-47,-302,28,6); ctx.fillRect(19,-302,28,6); ctx.fillRect(-35,-190,70,9);
-  ctx.strokeStyle=gold; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(-19,-282); ctx.lineTo(25,-220); ctx.stroke();
-  ctx.fillStyle=warm?'#b18a3a':'#6d5d8a'; for(let i=0;i<6;i++){ ctx.beginPath(); ctx.arc(12,-272+i*24,2.2,0,6.283); ctx.fill(); }
-  // 手臂瘦长贴身
-  ctx.fillStyle='#07070a'; ctx.beginPath(); ctx.moveTo(-54,-286); ctx.lineTo(-73,-166); ctx.lineTo(-62,-160); ctx.lineTo(-38,-280); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(54,-286); ctx.lineTo(72,-168); ctx.lineTo(61,-160); ctx.lineTo(38,-280); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#caa47e'; ctx.beginPath(); ctx.ellipse(-68,-158,7,10,0,0,6.283); ctx.ellipse(67,-158,7,10,0,0,6.283); ctx.fill();
-  // 颈与高立领
-  ctx.fillStyle='#b88d6d'; ctx.fillRect(-10,-330,20,30); ctx.fillStyle='#08080c'; ctx.beginPath(); ctx.moveTo(-28,-306); ctx.lineTo(-15,-338); ctx.lineTo(0,-316); ctx.lineTo(15,-338); ctx.lineTo(28,-306); ctx.closePath(); ctx.fill();
-  // 瘦长棱角脸：小头、颧骨、利落下颌
-  const skin=ctx.createLinearGradient(0,-382,0,-320); skin.addColorStop(0,'#d6b18d'); skin.addColorStop(1,'#9b6e54'); ctx.fillStyle=skin;
-  ctx.beginPath(); ctx.moveTo(-23,-372); ctx.lineTo(-18,-349); ctx.lineTo(-12,-326); ctx.lineTo(0,-315); ctx.lineTo(12,-326); ctx.lineTo(18,-349); ctx.lineTo(23,-372); ctx.lineTo(12,-389); ctx.lineTo(-12,-389); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='rgba(40,25,22,0.32)'; ctx.beginPath(); ctx.moveTo(-21,-352); ctx.lineTo(-7,-346); ctx.lineTo(-17,-337); ctx.closePath(); ctx.moveTo(21,-352); ctx.lineTo(7,-346); ctx.lineTo(17,-337); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle='rgba(45,28,24,0.78)'; ctx.lineWidth=1.4; ctx.beginPath(); ctx.moveTo(-13,-360); ctx.lineTo(-3,-359); ctx.moveTo(3,-359); ctx.lineTo(13,-360); ctx.moveTo(-7,-330); ctx.lineTo(7,-330); ctx.stroke();
-  ctx.fillStyle='#111116'; ctx.beginPath(); ctx.moveTo(-26,-374); ctx.lineTo(-12,-397); ctx.lineTo(11,-398); ctx.lineTo(27,-378); ctx.lineTo(17,-383); ctx.lineTo(8,-372); ctx.lineTo(-4,-385); ctx.lineTo(-15,-374); ctx.closePath(); ctx.fill();
-  // 顶光高光
-  ctx.fillStyle=hi; ctx.beginPath(); ctx.ellipse(0,-390,20,4,0,0,6.283); ctx.fill(); ctx.fillRect(-38,-307,76,3);
-  ctx.globalAlpha=1;
+  ctx.translate(px, footY);
+  ctx.scale(m.facing*m.turnScale, 1);
+  ctx.translate(0, -maxFootY + breath);
+  // 落地投影
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, maxFootY-breath+4, 60, 12, 0, 0, 6.283); ctx.fill();
+  // —— 后腿（偏暗）——
+  seg(P.hipL, P.kneeB, 20, '#0a0a0f'); seg(P.kneeB, P.footB, 16, '#050508');
+  ctx.fillStyle='#020203'; ctx.beginPath(); ctx.ellipse(P.footB.x+6, P.footB.y-3, 15, 7, 0, 0, 6.283); ctx.fill();
+  // —— 后臂（偏暗，躯干之后）——
+  seg(P.shoulderB, P.elbowB, 13, '#0b0b12'); seg(P.elbowB, P.handB, 11, '#0e0e16');
+  ctx.fillStyle='#caa47e'; ctx.beginPath(); ctx.arc(P.handB.x,P.handB.y,6,0,6.283); ctx.fill();
+  // —— 躯干军装外套（高立领、方肩、束腰、硬朗轮廓）——
+  const coat=ctx.createLinearGradient(0,P.shC.y,0,0);
+  coat.addColorStop(0,'#26262e'); coat.addColorStop(0.5,'#12121a'); coat.addColorStop(1,'#08080d');
+  ctx.fillStyle=coat;
+  ctx.beginPath();
+  ctx.moveTo(P.shoulderB.x-6, P.shoulderB.y-2);
+  ctx.lineTo(P.shoulderF.x+6, P.shoulderF.y-2);
+  ctx.lineTo(P.hipR.x+13, 6);
+  ctx.lineTo(P.hipR.x+9, 64);            // 外套下摆
+  ctx.lineTo(P.hipL.x-9, 64);
+  ctx.lineTo(P.hipL.x-13, 6);
+  ctx.closePath(); ctx.fill();
+  // 束腰
+  ctx.fillStyle='#050507'; ctx.fillRect(P.hipL.x-12,-6,(P.hipR.x-P.hipL.x)+24,10);
+  ctx.fillStyle=gold; ctx.fillRect(P.hipL.x-12,-2,(P.hipR.x-P.hipL.x)+24,3);
+  // 中缝高光 + 排扣
+  ctx.strokeStyle='rgba(255,255,255,0.10)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(P.neck.x, P.neck.y+6); ctx.lineTo(0,-4); ctx.stroke();
+  ctx.fillStyle=gold; for(let i=0;i<6;i++){ const t=i/6, bx=P.neck.x*(1-t), by=(P.neck.y+8)*(1-t)-4*t; ctx.beginPath(); ctx.arc(bx+3,by,1.9,0,6.283); ctx.fill(); }
+  // 肩章
+  ctx.fillStyle=gold; ctx.fillRect(P.shoulderF.x-6,P.shoulderF.y-3,18,6); ctx.fillRect(P.shoulderB.x-12,P.shoulderB.y-3,18,6);
+  // 顶光高光（上半身偏亮）
+  ctx.fillStyle=warm?'rgba(255,232,175,0.16)':'rgba(210,220,255,0.13)';
+  ctx.beginPath(); ctx.moveTo(P.shoulderB.x, P.shoulderB.y); ctx.lineTo(P.shoulderF.x, P.shoulderF.y); ctx.lineTo(4,-10); ctx.lineTo(-8,-10); ctx.closePath(); ctx.fill();
+  // —— 前腿 ——
+  seg(P.hipR, P.kneeF, 21, '#131319'); seg(P.kneeF, P.footF, 17, '#0a0a10');
+  ctx.fillStyle='#030304'; ctx.beginPath(); ctx.ellipse(P.footF.x+7, P.footF.y-3, 17, 8, 0, 0, 6.283); ctx.fill();
+  // —— 高立领 + 颈 ——
+  ctx.fillStyle='#b88d6d'; ctx.beginPath(); ctx.moveTo(P.neck.x-6,P.neck.y+2); ctx.lineTo(P.headC.x-4,P.headC.y+10); ctx.lineTo(P.headC.x+4,P.headC.y+10); ctx.lineTo(P.neck.x+6,P.neck.y+2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#0a0a11'; ctx.beginPath(); ctx.moveTo(P.neck.x-13,P.neck.y+6); ctx.lineTo(P.headC.x-7,P.headC.y+13); ctx.lineTo(P.headC.x+7,P.headC.y+13); ctx.lineTo(P.neck.x+13,P.neck.y+6); ctx.lineTo(P.neck.x+9,P.neck.y-6); ctx.lineTo(P.neck.x-9,P.neck.y-6); ctx.closePath(); ctx.fill();
+  // —— 头（瘦长棱角脸、高颧骨、薄唇）——
+  const Hc=P.headC;
+  const skin=ctx.createLinearGradient(0,Hc.y-24,0,Hc.y+22); skin.addColorStop(0,'#dbb891'); skin.addColorStop(1,'#9c6f55');
+  ctx.fillStyle=skin;
+  ctx.beginPath();
+  ctx.moveTo(Hc.x-11,Hc.y-13); ctx.lineTo(Hc.x-9,Hc.y+3); ctx.lineTo(Hc.x-4,Hc.y+19);
+  ctx.lineTo(Hc.x+4,Hc.y+19); ctx.lineTo(Hc.x+9,Hc.y+3); ctx.lineTo(Hc.x+11,Hc.y-13);
+  ctx.lineTo(Hc.x,Hc.y-22); ctx.closePath(); ctx.fill();
+  // 颧骨阴影
+  ctx.fillStyle='rgba(60,36,30,0.28)'; ctx.beginPath(); ctx.moveTo(Hc.x-10,Hc.y-2); ctx.lineTo(Hc.x-3,Hc.y+2); ctx.lineTo(Hc.x-8,Hc.y+9); ctx.closePath();
+  ctx.moveTo(Hc.x+10,Hc.y-2); ctx.lineTo(Hc.x+3,Hc.y+2); ctx.lineTo(Hc.x+8,Hc.y+9); ctx.closePath(); ctx.fill();
+  // 眉眼 + 薄唇
+  ctx.strokeStyle='rgba(40,26,22,0.8)'; ctx.lineWidth=1.3;
+  ctx.beginPath(); ctx.moveTo(Hc.x-8,Hc.y-5); ctx.lineTo(Hc.x-2,Hc.y-4); ctx.moveTo(Hc.x+2,Hc.y-4); ctx.lineTo(Hc.x+8,Hc.y-5); ctx.stroke();
+  ctx.fillStyle='#0a0a0c'; ctx.fillRect(Hc.x-7,Hc.y-3,4,1.6); ctx.fillRect(Hc.x+3,Hc.y-3,4,1.6);
+  ctx.strokeStyle='rgba(70,44,38,0.7)'; ctx.beginPath(); ctx.moveTo(Hc.x-4,Hc.y+11); ctx.lineTo(Hc.x+4,Hc.y+11); ctx.stroke();
+  // 头发（棱角）
+  ctx.fillStyle='#0d0d13'; ctx.beginPath(); ctx.moveTo(Hc.x-12,Hc.y-6); ctx.quadraticCurveTo(Hc.x,Hc.y-30,Hc.x+12,Hc.y-6); ctx.lineTo(Hc.x+8,Hc.y-12); ctx.quadraticCurveTo(Hc.x,Hc.y-19,Hc.x-8,Hc.y-12); ctx.closePath(); ctx.fill();
+  // 头顶光
+  ctx.fillStyle=warm?'rgba(255,236,190,0.35)':'rgba(214,224,255,0.28)'; ctx.beginPath(); ctx.ellipse(Hc.x,Hc.y-16,8,3,0,0,6.283); ctx.fill();
+  // —— 前臂（独白手势臂，置于最前）——
+  seg(P.shoulderF, P.elbowF, 14, '#1c1c24'); seg(P.elbowF, P.handF, 12, '#20202a');
+  ctx.fillStyle='#d3ab82'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y,7,9,0,0,6.283); ctx.fill();  // 掌
   ctx.restore();
+  // 记录头顶屏幕坐标供对白框定位
+  m.headX=px; m.headTopY=footY-maxFootY+breath+(Hc.y-24);
 }
-// 字幕：中英对照台词框，逐行淡入，保留上一行淡出
+// 层5 舞台对白框：跟随哈姆雷特头顶，仅渲染当前行（中英对照），逐行淡入、无残影
 function _monoSubtitles(m, alpha){
   if(m.t<70 && !m.ending) return;
   const lines=ACT5_MONOLOGUE, idx=clamp(m.line,0,lines.length-1);
-  const lineA=m.ending?1:clamp(m.lineT/38,0,1);
-  const boxY=H-150, boxH=100, a=alpha*lineA;
-  ctx.save(); ctx.textAlign='center';
-  const bg=ctx.createLinearGradient(0,boxY,0,boxY+boxH);
-  bg.addColorStop(0,'rgba(4,4,6,0)'); bg.addColorStop(0.26,'rgba(4,4,6,0.80)'); bg.addColorStop(1,'rgba(4,4,6,0.86)');
-  ctx.fillStyle=bg; ctx.fillRect(0,boxY,W,boxH+42);
+  const c=lines[idx];
+  const lineA=m.ending?1:clamp(m.lineT/38,0,1);   // 本行淡入系数
+  const a=alpha*lineA;
+  // 测量框宽（贴合当前行文本）
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.font='italic bold 17px Georgia,serif'; const wEn=ctx.measureText(c.en).width;
+  ctx.font='bold 18px "Songti SC",serif'; const wZh=ctx.measureText(c.zh).width;
+  const boxW=clamp(Math.max(wEn,wZh)+56, 260, W-140), boxH=78;
+  let cx=clamp(m.headX, boxW/2+16, W-boxW/2-16);
+  let boxY=clamp(m.headTopY-boxH-22, 40, H-260);   // 头顶上方
+  const bx=cx-boxW/2;
+  // 对白框底衬 + 细边框
   ctx.globalAlpha=alpha;
-  ctx.strokeStyle='rgba(214,174,69,0.46)'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(W*0.16,boxY+10); ctx.lineTo(W*0.84,boxY+10); ctx.stroke();
-  ctx.textAlign='left'; ctx.fillStyle='rgba(214,174,69,0.92)'; ctx.font='bold 13px "Courier New",monospace';
-  ctx.fillText('哈姆雷特 · HAMLET', W*0.16, boxY-14);
-  const c=lines[idx]; ctx.textAlign='center'; ctx.globalAlpha=a;
-  ctx.shadowColor='rgba(0,0,0,0.82)'; ctx.shadowBlur=8; ctx.shadowOffsetY=2;
-  ctx.fillStyle='#f4d66d'; ctx.font='italic bold 17px Georgia,serif'; ctx.fillText(c.en, W/2, boxY+45);
-  ctx.fillStyle='#fff4e2'; ctx.font='bold 18px "Songti SC",serif'; ctx.fillText(c.zh, W/2, boxY+76);
-  ctx.shadowBlur=0; ctx.globalAlpha=1;
+  const bg=ctx.createLinearGradient(0,boxY,0,boxY+boxH);
+  bg.addColorStop(0,'rgba(6,6,10,0.90)'); bg.addColorStop(1,'rgba(6,6,10,0.80)');
+  ctx.fillStyle=bg; ctx.fillRect(bx,boxY,boxW,boxH);
+  ctx.strokeStyle='rgba(214,174,69,0.55)'; ctx.lineWidth=1.4; ctx.strokeRect(bx+0.5,boxY+0.5,boxW-1,boxH-1);
+  // 指向人物的小三角
+  ctx.fillStyle='rgba(6,6,10,0.90)'; ctx.beginPath(); ctx.moveTo(cx-8,boxY+boxH); ctx.lineTo(cx+8,boxY+boxH); ctx.lineTo(cx,boxY+boxH+11); ctx.closePath(); ctx.fill();
+  // 名牌
+  ctx.textAlign='left'; ctx.fillStyle='rgba(214,174,69,0.92)'; ctx.font='bold 12px "Courier New",monospace';
+  ctx.fillText('哈姆雷特 · HAMLET', bx+12, boxY-8);
+  // 仅当前行文本（淡入、清晰、无叠字残影）
+  ctx.textAlign='center'; ctx.globalAlpha=a;
+  ctx.shadowColor='rgba(0,0,0,0.82)'; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
+  ctx.fillStyle='#f4d66d'; ctx.font='italic bold 17px Georgia,serif'; ctx.fillText(c.en, cx, boxY+32);
+  ctx.fillStyle='#fff4e2'; ctx.font='bold 18px "Songti SC",serif'; ctx.fillText(c.zh, cx, boxY+60);
+  ctx.shadowBlur=0; ctx.shadowOffsetY=0; ctx.globalAlpha=1;
   ctx.restore();
 }
 // 右下角固定跳过按钮（记录命中区供点击/触摸判定）
