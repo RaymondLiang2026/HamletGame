@@ -56,6 +56,16 @@ function rectsOverlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && 
 function dist(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return Math.hypot(dx,dy); }
 function shake(m,t){ shakeMag=Math.max(shakeMag,m); shakeT=Math.max(shakeT,t); }
 function flash(c,t){ flashColor=c; flashT=Math.max(flashT,t); }
+/* -------- 视差 & 背景特效工具（纯程序化，无外部资源） --------
+   三层视差以 camX 为水平滚动量：远景 0.2 / 中景 0.5 / 近景 0.8。
+   parallaxOff(factor,period) 返回 [0,period) 的回绕偏移，配合
+   `for(let bx=-off; bx<W+period; bx+=period)` 平铺，保证不出现空洞。 */
+function parallaxOff(factor, period){ let o=(camX*factor)%period; if(o<0)o+=period; return o; }
+// 基于整数索引的确定性伪随机（静态元素用，避免每帧跳动）
+function hnoise(i){ const s=Math.sin(i*12.9898+78.233)*43758.5453; return s-Math.floor(s); }
+// 全屏冲击波（阶段切换）：从中心扩散的白色圆环，帧驱动
+let shockwaves=[];
+function spawnShockwave(){ shockwaves.push({t:0, max:46}); if(shockwaves.length>4) shockwaves.shift(); }
 // 确定性随机（用于关卡生成）
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 
@@ -143,6 +153,7 @@ const Sound = {
   seq:null, bass:null, perc:null, tempo:.3, wave:'square', bassWave:'triangle',
   water:false, bell:false, organ:false, choir:false, brass:false, intensity:1,
   step:0, nextT:0, timer:null, cur:null,
+  custom:false, custMusic:null, custSecIdx:0, custNextT:0,
   init(){
     if(this.ctx) return;
     const AC = window.AudioContext||window.webkitAudioContext;
@@ -442,6 +453,16 @@ const Sound = {
     if(this.cur===name && this.timer){ return; }
     this.cur=name; this.step=0;
     const M=MUSIC[name]||MUSIC.castle;
+    this.custom=!!M.custom;
+    if(this.custom){
+      // 自定义平滑合成路径（最终 Boss 战 hero/imperial 专用；其它 BGM 不受影响）
+      this.custMusic=M; this.custSecIdx=0;
+      if(!this.ctx||!this.enabled) return;
+      this.custNextT=this.ctx.currentTime+.08;
+      if(this.timer) clearInterval(this.timer);
+      this.timer=setInterval(()=>this.sched(),40);
+      return;
+    }
     this.seq=M.seq; this.bass=M.bass; this.perc=M.perc; this.tempo=M.tempo;
     this.wave=M.wave; this.bassWave=M.bassWave||'triangle';
     this.water=!!M.water; this.bell=!!M.bell; this.organ=!!M.organ; this.choir=!!M.choir; this.brass=!!M.brass;
@@ -454,6 +475,7 @@ const Sound = {
   boostIntensity(v){ this.intensity=v; },
   sched(){
     if(!this.ctx||!this.enabled) return;
+    if(this.custom){ this._schedCustom(); return; }
     const inten=this.intensity;
     while(this.nextT < this.ctx.currentTime+.18){
       const i=this.step, n=this.seq[i%this.seq.length], dur=this.tempo*(n.d||1);
@@ -491,7 +513,70 @@ const Sound = {
       this.nextT+=dur; this.step++;
     }
   },
-  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; },
+  // ===== 自定义平滑 BGM 调度（最终 Boss 战 hero/imperial 专用）=====
+  // 按段落增量调度：每次仅排入即将开始的一个段落（约 0.8s 前瞻），
+  // 段落之间靠 arrangement 取模无缝循环；intensity 每段实时读取（跟随 Boss 阶段）。
+  _schedCustom(){
+    const M=this.custMusic; if(!M||!M.arrangement) return;
+    const look=0.8;
+    while(this.custNextT < this.ctx.currentTime + look){
+      const arr=M.arrangement, name=arr[this.custSecIdx % arr.length];
+      try { M.renderSection(this, name, this.custNextT, this.intensity); } catch {}
+      this.custNextT += (M.sectionBeats[name]||16) * M.beat;
+      this.custSecIdx++;
+    }
+  },
+  // 平滑单音：绝对时间 t 起音，独立 osc+gain（+可选滤波），指数淡入淡出，可选线性滑音。
+  // 频率用 setValueAtTime 锚定、滑音用 linearRampToValueAtTime；增益 setValueAtTime(极小)→exp 起音→exp 收音(0.0001)，绝不硬切。
+  musNote(o){
+    if(!this.ctx||!this.enabled) return;
+    const t=o.t, dur=o.dur;
+    const peak=Math.max(0.0002, o.vol||0.2);
+    const atk=Math.min(o.atk||0.03, dur*0.4);
+    const rel=Math.min(o.rel||dur*0.5, dur*0.8);
+    const osc=this.ctx.createOscillator(), g=this.ctx.createGain();
+    osc.type=o.type||'sine';
+    osc.frequency.setValueAtTime(o.f, t);                                   // 起始频率锚定
+    if(o.to && o.to!==o.f) osc.frequency.linearRampToValueAtTime(o.to, t+dur*(o.glide||1)); // 滑音平滑过渡
+    g.gain.setValueAtTime(0.0001, t);                                       // 从极小值起（exp 不能从 0）
+    g.gain.exponentialRampToValueAtTime(peak, t+atk);                       // 平滑淡入
+    const relStart=Math.max(t+atk+0.005, t+dur-rel);
+    g.gain.setValueAtTime(peak, relStart);                                  // 维持峰值
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);                     // 平滑收音，禁止硬切
+    if(o.filter){
+      const bf=this.ctx.createBiquadFilter();
+      bf.type=o.filter.type||'lowpass';
+      bf.frequency.setValueAtTime(o.filter.freq||900, t);
+      if(o.filter.q) bf.Q.setValueAtTime(o.filter.q, t);
+      osc.connect(bf); bf.connect(g);
+    } else { osc.connect(g); }
+    g.connect(o.dest||this.mg);
+    osc.start(t); osc.stop(t+dur+0.06);
+    return g;
+  },
+  // 平滑噪声脉冲（军鼓/击打），绝对时间；同样 exp 淡入淡出。
+  musNoise(t,dur,vol,ftype,freq,q){
+    if(!this.ctx||!this.enabled) return;
+    const n=Math.max(1,Math.floor(this.ctx.sampleRate*dur));
+    const b=this.ctx.createBuffer(1,n,this.ctx.sampleRate), d=b.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+    const s=this.ctx.createBufferSource(); s.buffer=b;
+    const f=this.ctx.createBiquadFilter(); f.type=ftype||'lowpass'; f.frequency.setValueAtTime(freq||400,t); if(q) f.Q.setValueAtTime(q,t);
+    const g=this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,vol),t+0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    s.connect(f); f.connect(g); g.connect(this.mg); s.start(t); s.stop(t+dur+0.03);
+  },
+  // 定音鼓：低频脉冲 sine（音高快速下滑）+ 短 decay + 低通噪声击打。
+  musTimpani(t,freq,vol){
+    if(!this.ctx||!this.enabled) return;
+    const o=this.ctx.createOscillator(), g=this.ctx.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(freq,t); o.frequency.exponentialRampToValueAtTime(Math.max(20,freq*0.4),t+0.18);
+    g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,vol),t+0.006); g.gain.exponentialRampToValueAtTime(0.0001,t+0.34);
+    o.connect(g); g.connect(this.mg); o.start(t); o.stop(t+0.36);
+    this.musNoise(t,0.11,vol*0.4,'lowpass',200,1);
+  },
+  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; this.custom=false; this.custMusic=null; },
   toggle(){ this.enabled=!this.enabled; if(!this.enabled) this.stopMusic(); return this.enabled; }
 };
 (function hardenSoundAPI(){
@@ -517,48 +602,120 @@ function _seq3(rows){
     seq.push(d!==1?{f,d}:{f}); bass.push(bf); harm.push(hf); }
   return { seq, bass, harm };
 }
-// hero（生还线）：怪物猎人「英雄之证」式恢弘交响 —— 铜管三连冲锋 + 弦乐拨奏 + 和声层 + 定音鼓，
-// 明显 引子→A→A→B→A→B→A→尾声 变奏结构，单轮循环 ≈44s，音量随 Boss 阶段(intensity)递增。
+// ============================================================================
+// hero（生还线）：英雄交响 —— 纯 Web Audio 平滑合成，段落 A(弦乐铺垫)→B(铜管三连音主题)
+// →C(全奏冲锋)→A'(变奏)→B→C→A→B→C 循环。BPM≈140（每拍≈0.43s），单轮 ≈61.7s（≥60s）。
+// 每音独立 osc+gain，setValueAtTime 锚定频率、增益 exp 淡入/淡出（收音目标 0.0001），彻底消除硬切卡顿。
+// ============================================================================
 function _buildHeroMusic(){
-  // 引子：铜管三连音冲锋号角
-  const FAN=[[N.A4,.5,N.A2,N.E4],[N.A4,.5,N.A2,N.E4],[N.A4,.5,N.A2,N.E4],[N.C5,1.5,N.A2,N.E4],
-             [N.G4,.5,N.G2,N.D4],[N.G4,.5,N.G2,N.D4],[N.G4,.5,N.G2,N.D4],[N.B4,1.5,N.G2,N.D4]];
-  // A：英雄主题（上行铜管 + 三度和声）
-  const A=[[N.A4,1,N.A2,N.C5],[N.C5,1,N.A2,N.E5],[N.E5,1,N.A2,N.A5],[N.A5,1.5,N.A2,N.C5],[N.G5,.5,N.E2,N.B4],
-           [N.E5,1,N.E2,N.G4],[N.C5,1,N.C3,N.E4],[N.D5,2,N.G2,N.B4],
-           [N.F5,1,N.F2,N.A4],[N.A5,1,N.F2,N.C5],[N.G5,1,N.C3,N.E5],[N.E5,1.5,N.C3,N.C5],[N.C5,.5,N.G2,N.G4],
-           [N.D5,1,N.G2,N.F4],[N.B4,1,N.G2,N.D4],[N.A4,2,N.A2,N.C5]];
-  // B：抒情桥段（弦乐拨奏上行）
-  const B=[[N.C5,1,N.C3,N.E5],[N.D5,1,N.C3,N.F5],[N.E5,1,N.C3,N.G5],[N.G5,2,N.C3,N.C6],[N.F5,1,N.F2,N.A5],
-           [N.E5,1,N.F2,N.G5],[N.D5,1,N.D3,N.F5],[N.C5,2,N.G2,N.E5],
-           [N.A4,1,N.A2,N.C5],[N.C5,1,N.A2,N.E5],[N.E5,1,N.E2,N.G5],[N.D5,2,N.G2,N.F5],[N.B4,1,N.G2,N.D5],
-           [N.C5,3,N.C3,N.E5]];
-  // 尾声：胜利强奏
-  const C=[[N.A5,1,N.A2,N.C5],[N.G5,1,N.E2,N.B4],[N.F5,1,N.F2,N.A4],[N.E5,1,N.C3,N.G4],
-           [N.A5,2,N.A2,N.C5],[N.E5,1,N.E2,N.G4],[N.A5,1,N.A2,N.C5],[N.C6,4,N.A2,N.E5]];
-  const round=[].concat(A,A,B,A,B,A,C);
-  const rows=[].concat(FAN,round,round,C);
-  const {seq,bass,harm}=_seq3(rows);
-  return { tempo:.17, wave:'sawtooth', bassWave:'square', harmWave:'triangle',
-    brass:true, timpani:true, perc:[1,0,0,1,0,1,0,0], seq, bass, harm };
+  const beat=60/140;                                   // ≈0.4286s
+  const arrangement=['A','B','C','A2','B','C','A','B','C'];
+  const sectionBeats={A:16,B:16,C:16,A2:16};
+  const loopDur=arrangement.reduce((s,n)=>s+sectionBeats[n],0)*beat;   // ≈61.7s
+
+  // 段落 A 弦乐铺垫：正弦波和声（主音 440 + 泛音 880 + 528Hz），4 拍一和弦，低音量渐入
+  const PAD=[ [440,880,528], [349,698,440], [392,784,494], [330,659,392] ];
+  // 段落 B/C 铜管主旋律（16 拍，每拍一音，作三连音强弱弱发声），中高音区
+  const MEL=[N.A4,N.C5,N.E5,N.A5, N.G5,N.E5,N.C5,N.D5, N.F5,N.A5,N.G5,N.E5, N.D5,N.C5,N.B4,N.A4];
+  const BASSLINE=[N.A2,N.A2,N.A2,N.A2, N.E2,N.E2,N.E2,N.C3, N.F2,N.F2,N.C3,N.C3, N.G2,N.G2,N.E2,N.A2];
+
+  function pad(S,t0,inten,vol){
+    for(let c=0;c<4;c++){
+      const t=t0+c*4*beat, chord=PAD[c];
+      chord.forEach((f,vi)=>S.musNote({t,f,dur:4.35*beat,type:'sine',                 // 相邻和弦交叠 0.35 拍平滑衔接
+        vol:(vol||0.09)*inten*(vi===2?0.7:1), atk:0.6, rel:2.2*beat}));               // 长 attack 渐入
+    }
+  }
+  // 铜管三连音：sawtooth（主）+ triangle（叠加）模拟铜管；每拍 3 连音，首拍强、后两弱（强弱弱）
+  function brassTriplets(S,t0,inten,volScale,lead){
+    const sub=beat/3;
+    for(let b=0;b<16;b++){
+      const f=MEL[b], t=t0+b*beat;
+      for(let k=0;k<3;k++){
+        const tt=t+k*sub, v=(k===0?0.15:0.085)*inten*(volScale||1);
+        S.musNote({t:tt,f,dur:sub*1.15,type:'sawtooth',vol:v,atk:0.012,rel:sub*0.6});  // 略微交叠(1.15)消除颗粒断裂
+        S.musNote({t:tt,f,dur:sub*1.15,type:'triangle',vol:v*0.6,atk:0.012,rel:sub*0.6});
+        if(lead&&k===0) S.musNote({t:tt,f:f*2,dur:sub*1.1,type:'square',vol:0.06*inten,atk:0.01,rel:sub*0.5}); // 小号冲锋（方波高频）
+      }
+    }
+  }
+  function bassLine(S,t0,inten,volScale){
+    for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:BASSLINE[b],dur:beat*0.98,type:'square',
+      vol:0.18*inten*(volScale||1),atk:0.02,rel:beat*0.5});
+  }
+  return {
+    custom:true, beat, arrangement, sectionBeats, loopDur,
+    renderSection(S,name,t0,inten){
+      if(name==='A'){ pad(S,t0,inten,0.09); }
+      else if(name==='A2'){                                                            // A' 变奏：pad + 三角波琶音对句
+        pad(S,t0,inten,0.10);
+        const arp=[N.A4,N.C5,N.E5,N.C5, N.G4,N.B4,N.D5,N.B4, N.F4,N.A4,N.C5,N.A4, N.E4,N.G4,N.B4,N.G4];
+        for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:arp[b],dur:beat*0.9,type:'triangle',vol:0.075*inten,atk:0.02,rel:beat*0.5});
+      }
+      else if(name==='B'){ brassTriplets(S,t0,inten,1,false); bassLine(S,t0,inten,1); pad(S,t0,inten,0.05); }
+      else if(name==='C'){                                                             // 全奏冲锋：铜管+方波小号+低音+定音鼓每拍强击
+        brassTriplets(S,t0,inten,1.15,true); bassLine(S,t0,inten,1.1); pad(S,t0,inten,0.06);
+        for(let b=0;b<16;b++) S.musTimpani(t0+b*beat, b%4===0?98:110, (b%4===0?0.5:0.32)*inten);
+      }
+    }
+  };
 }
-// imperial（溺死线）：达斯维达「帝国进行曲」式沉重压迫 —— 低音铜管附点进行曲 + 军鼓 + 大鼓 + 小调和声，
-// 明显 A→A→B→A→C 段落循环 + 尾段收束，单轮循环 ≈43s，音量随 Boss 阶段(intensity)递增。
+// ============================================================================
+// imperial（溺死线）：帝国进行曲风 —— 纯 Web Audio 平滑合成，序(低音大提琴)→A(铜管附点主题,
+// 低通滤波)→A→B(弦乐反主题+竖琴)→A强奏→B→A→序 循环。BPM≈100（每拍 0.6s），单轮 ≈67.2s（≥60s）。
+// 全部音符 setValueAtTime 锚定 + 长音 linearRampToValueAtTime 滑音，增益 exp 淡入淡出，无硬切。
+// ============================================================================
 function _buildImperialMusic(){
-  // A：主进行曲动机（短-短-长 附点）
-  const A=[[N.A3,1,N.A2,N.E3],[N.A3,1,N.A2,N.E3],[N.A3,1,N.A2,N.E3],[N.F3,1.5,N.F2,N.C3],[N.C4,.5,N.C3,N.A3],
-           [N.A3,2,N.A2,N.E3],[N.F3,1.5,N.F2,N.C3],[N.C4,.5,N.C3,N.A3],[N.A3,2,N.A2,N.E3]];
-  // B：升高一层的紧张再现
-  const B=[[N.E4,1,N.E2,N.B3],[N.E4,1,N.E2,N.B3],[N.E4,1,N.E2,N.B3],[N.F4,1.5,N.F2,N.C4],[N.C4,.5,N.C3,N.A3],
-           [N.Gs3,2,N.E2,N.E3],[N.F4,1.5,N.F2,N.C4],[N.C4,.5,N.C3,N.A3],[N.A4,2,N.A2,N.E4]];
-  // C：下行威压的发展段
-  const C=[[N.A4,1,N.A2,N.C4],[N.Gs4,1,N.E2,N.B3],[N.G4,1,N.G2,N.As3],[N.F4,1.5,N.F2,N.A3],[N.E4,.5,N.C3,N.Gs3],
-           [N.F4,2,N.F2,N.A3],[N.C4,2,N.C3,N.E3],[N.A3,2,N.A2,N.E3]];
-  const round=[].concat(A,A,B,A,C);
-  const rows=[].concat(round,round,round,A,B,A);
-  const {seq,bass,harm}=_seq3(rows);
-  return { tempo:.22, wave:'sawtooth', bassWave:'square', harmWave:'sawtooth',
-    brass:true, timpani:true, perc:[1,0,1,1,0,1,0,0], seq, bass, harm };
+  const beat=60/100;                                   // 0.6s
+  const arrangement=['I','A','A','B','As','B','A','I'];
+  const sectionBeats={I:8,A:16,B:16,As:16};
+  const loopDur=arrangement.reduce((s,n)=>s+sectionBeats[n],0)*beat;   // 67.2s
+
+  // A 铜管附点动机（8 拍 motif，×2=16 拍）：长短短（0.75/0.25 附点）模拟 Imperial March 节奏型
+  const MOTIF=[[N.A3,1],[N.A3,1],[N.A3,1],[N.F3,0.75],[N.C4,0.25],[N.A3,1.5],[N.F3,0.5],[N.C4,1],[N.A3,1]];
+  // B 弦乐反主题：中音区哀鸣下行旋律
+  const LAMENT=[[N.E5,2],[N.D5,1],[N.C5,1],[N.B4,2],[N.A4,2],[N.C5,1],[N.B4,1],[N.A4,2],[N.G4,2],[N.A4,1],[N.E4,1]];
+  const HARP=[N.A4,N.C5,N.E5,N.A5];
+
+  // 铜管动机一遍（strong=强奏：加高八度 + 定音鼓/军鼓）；锯齿波经低通滤波器截高频，音色厚重
+  function motifOnce(S,t0,inten,volScale,strong){
+    let bt=0;
+    for(const [f,d] of MOTIF){
+      const t=t0+bt*beat, dur=d*beat;
+      S.musNote({t,f,dur:dur*0.98,type:'sawtooth',vol:0.16*inten*(volScale||1),atk:0.02,rel:dur*0.4,filter:{type:'lowpass',freq:strong?1100:850,q:0.7}});
+      S.musNote({t,f:f*2/3,dur:dur*0.98,type:'sawtooth',vol:0.09*inten*(volScale||1),atk:0.02,rel:dur*0.4,filter:{type:'lowpass',freq:700,q:0.7}}); // 小调下方五度和声
+      if(strong) S.musNote({t,f:f*2,dur:dur*0.9,type:'sawtooth',vol:0.07*inten,atk:0.02,rel:dur*0.4,filter:{type:'lowpass',freq:1600}});
+      bt+=d;
+    }
+    const bassNotes=[N.A2,N.A2,N.F2,N.C3];
+    for(let k=0;k<4;k++) S.musNote({t:t0+k*2*beat,f:bassNotes[k],dur:2*beat*0.96,type:'sawtooth',vol:0.2*inten*(volScale||1),atk:0.03,rel:beat*0.6,filter:{type:'lowpass',freq:400}});
+    if(strong) for(let b=0;b<8;b++){ S.musTimpani(t0+b*beat,b%2===0?73:98,(b%2===0?0.45:0.3)*inten); S.musNoise(t0+b*beat,0.1,0.12*inten,'lowpass',2000,1); }
+  }
+  return {
+    custom:true, beat, arrangement, sectionBeats, loopDur,
+    renderSection(S,name,t0,inten){
+      if(name==='I'){                                                                  // 序：低音大提琴（sine+sawtooth 50–100Hz）缓慢拉奏（长 attack + 滑音）
+        S.musNote({t:t0,f:55,to:65,dur:4*beat,type:'sine',vol:0.18*inten,atk:1.0,rel:1.5});
+        S.musNote({t:t0,f:55,to:65,dur:4*beat,type:'sawtooth',vol:0.06*inten,atk:1.1,rel:1.5,filter:{type:'lowpass',freq:200}});
+        S.musNote({t:t0+4*beat,f:73,to:82,dur:4*beat,type:'sine',vol:0.18*inten,atk:1.0,rel:1.5});
+        S.musNote({t:t0+4*beat,f:73,to:82,dur:4*beat,type:'sawtooth',vol:0.06*inten,atk:1.1,rel:1.5,filter:{type:'lowpass',freq:200}});
+      }
+      else if(name==='A'){ motifOnce(S,t0,inten,1,false); motifOnce(S,t0+8*beat,inten,1,false); }
+      else if(name==='As'){ motifOnce(S,t0,inten,1.2,true); motifOnce(S,t0+8*beat,inten,1.2,true); } // A 强奏
+      else if(name==='B'){                                                             // 弦乐反主题：正弦哀鸣 + 三角波竖琴点缀
+        let bt=0;
+        for(const [f,d] of LAMENT){
+          const t=t0+bt*beat, dur=d*beat;
+          S.musNote({t,f,dur:dur*0.96,type:'sine',vol:0.15*inten,atk:0.08,rel:dur*0.45});
+          S.musNote({t,f:f*0.5,dur:dur*0.96,type:'sine',vol:0.06*inten,atk:0.1,rel:dur*0.45}); // 低八度铺底
+          bt+=d;
+        }
+        for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:HARP[b%4],dur:beat*0.5,type:'triangle',vol:0.06*inten,atk:0.01,rel:beat*0.3}); // 竖琴琶音
+        const bn=[N.A2,N.F2,N.G2,N.E2];
+        for(let k=0;k<4;k++) S.musNote({t:t0+k*4*beat,f:bn[k],dur:4*beat*0.92,type:'sine',vol:0.12*inten,atk:0.1,rel:beat});
+      }
+    }
+  };
 }
 
 const MUSIC = {
@@ -813,6 +970,7 @@ function updateParticles(){
   for(let i=floaters.length-1;i>=0;i--){ const f=floaters[i]; f.y-=0.7; if(--f.life<=0) floaters.splice(i,1); }
   for(let i=petals.length-1;i>=0;i--){ const p=petals[i]; p.x+=p.vx+Math.sin(frame*0.04+p.ph)*0.5; p.y+=p.vy; p.rot+=p.vr; if(p.y>level.height+40||--p.life<=0) petals.splice(i,1); }
   for(let i=crows.length-1;i>=0;i--){ const c=crows[i]; c.x+=c.vx; c.flap+=0.3; if(c.x<camX-200||c.x>camX+VW+400) crows.splice(i,1); }
+  for(let i=shockwaves.length-1;i>=0;i--){ const s=shockwaves[i]; if(++s.t>=s.max) shockwaves.splice(i,1); }
 }
 function spawnPetal(x,y,color){ petals.push({x,y,vx:rand(-.6,.4),vy:rand(.6,1.6),rot:rand(0,6.28),vr:rand(-.1,.1),size:rand(3,6),color:color||'#ffd0e6',ph:rand(0,6.28),life:rand(200,400)}); }
 
@@ -877,6 +1035,7 @@ function drawBackground(){
     drawSceneDecorations();
     drawWeatherParticles();
     drawAmbientBg();
+    drawActAmbientFx();
     return;
   }
   // 天空渐变
@@ -885,8 +1044,13 @@ function drawBackground(){
   const grd = ctx.createLinearGradient(0,0,0,H);
   grd.addColorStop(0, sky[0]); grd.addColorStop(0.5, sky[1]); grd.addColorStop(1, sky[2]);
   ctx.fillStyle=grd; ctx.fillRect(0,0,W,H);
+  // 第五幕 Boss<30% 血量：天空渐染暗红压迫
+  drawFinalSkyTint();
 
-  // 月亮 / 光源
+  // 远景层视差专属新增元素（山脊/城堡废墟等，视差 0.2）
+  drawFarLayerFx();
+
+  // 月亮 / 光源（远景，视差 0.05）
   if(theme.moon){
     const mx = W*0.78 - (camX*0.05)%W, my=H*0.22;
     const mg = ctx.createRadialGradient(mx,my,4,mx,my,60);
@@ -894,24 +1058,80 @@ function drawBackground(){
     mg.addColorStop(0, moonC+'0.95)'); mg.addColorStop(1, moonC+'0)');
     ctx.fillStyle=mg; ctx.beginPath(); ctx.arc(mx,my,60,0,6.283); ctx.fill();
     ctx.fillStyle= darkMode?'#c9b6e0':'#f2eecf'; ctx.beginPath(); ctx.arc(mx,my,26,0,6.283); ctx.fill();
+    drawMoonCloudFlicker(mx,my);   // 云层遮月闪烁（第一幕冷月）
   }
 
-  // 远景剪影层（视差 0.15）
-  const off1 = (camX*0.15)%320;
+  // 远景剪影层（视差 0.2）
+  const off1 = parallaxOff(0.2,320);
   ctx.fillStyle = darkMode? '#0d0814' : theme.far;
   for(let bx=-off1-320; bx<W+320; bx+=320){ theme.drawFar(bx, H); }
 
-  // 中景层（视差 0.45）
-  const off2 = (camX*0.45)%260;
+  // 中景层（视差 0.5）
+  const off2 = parallaxOff(0.5,260);
   ctx.fillStyle = darkMode? '#140b1e' : theme.mid;
   for(let bx=-off2-260; bx<W+260; bx+=260){ theme.drawMid(bx, H); }
 
-  // 程序化场景装饰与天气，均在背景层绘制，不参与碰撞。
+  // 中景层视差专属新增元素（城垛/柱廊/挂毯/电线杆/废墟，视差 0.5）
+  drawMidLayerFx();
+
+  // 程序化场景装饰与天气（近景 0.8），均在背景层绘制，不参与碰撞。
   drawSceneDecorations();
   drawWeatherParticles();
 
   // 环境浮层：雾/雨/花瓣/乌鸦
   drawAmbientBg();
+  // 各幕动态特效（守卫/鬼魂/死神/花瓣/偷窥/乌鸦/窗光/滚动浓雾等）
+  drawActAmbientFx();
+}
+/* ============================================================
+   视差分层新增背景元素（远景 0.2 / 中景 0.5）——确定性静态，index 伪随机
+   ============================================================ */
+function drawFarLayerFx(){
+  if(actIndex===ACT_ESCAPE){
+    // 第三幕远景：荒野山脊剪影
+    const off=parallaxOff(0.2,W); ctx.save(); ctx.fillStyle=darkMode?'#120c1a':'#171020';
+    for(let seg=-1; seg<=1; seg++){ const bx=-off+seg*W; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(bx,H*0.5);
+      for(let x=0;x<=W;x+=40){ const n=hnoise((x/40)|0); ctx.lineTo(bx+x, H*0.5 - n*70 - Math.sin(x*0.01)*20); }
+      ctx.lineTo(bx+W,H); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  } else if(actIndex===ACT_FINAL){
+    // 第五幕远景：城堡废墟轮廓（断裂塔楼）
+    const off=parallaxOff(0.2,360); ctx.save(); ctx.fillStyle=darkMode?'#160b1c':'#1c1424';
+    for(let bx=-off-360; bx<W+360; bx+=360) drawRuinSilhouette(bx, H*0.5);
+    ctx.restore();
+  }
+}
+function drawMidLayerFx(){
+  const off=parallaxOff(0.5,300);
+  if(actIndex===ACT_CASTLE){
+    // 第一幕中景：城垛（雉堞）轮廓 + 飘动旗帜
+    ctx.save(); ctx.fillStyle='#20263f';
+    for(let bx=-off-300; bx<W+300; bx+=300){ const top=H*0.30;
+      ctx.fillRect(bx, top, 300, H*0.12);
+      for(let m=0;m<10;m++){ if(m%2===0) ctx.fillRect(bx+m*30, top-12, 22, 12); }
+      // 城垛上的飘旗
+      drawParapetFlag(bx+70, top-12, frame*0.03);
+      drawParapetFlag(bx+220, top-12, frame*0.03+2);
+    }
+    ctx.restore();
+  } else if(actIndex===ACT_COURT){
+    // 第二幕中景：宫廷柱廊透视（左右各 2 根高柱）+ 挂毯花纹
+    drawCourtColonnade();
+  } else if(actIndex===ACT_ESCAPE){
+    // 第三幕中景：破败电线杆 + 随风摆动电线
+    ctx.save();
+    for(let bx=-off-300; bx<W+300; bx+=300){ drawPowerPole(bx+60, H*0.62); drawPowerPole(bx+220, H*0.60);
+      const sway=Math.sin(frame*0.02+bx*0.01)*10;
+      ctx.strokeStyle='rgba(20,14,24,0.7)'; ctx.lineWidth=1.4; ctx.beginPath();
+      ctx.moveTo(bx+60,H*0.62-46); ctx.quadraticCurveTo(bx+140,H*0.62-30+sway,bx+220,H*0.60-46); ctx.stroke();
+    }
+    ctx.restore();
+  } else if(actIndex===ACT_FINAL){
+    // 第五幕中景：塌陷墙壁 + 断裂柱子
+    ctx.save(); ctx.fillStyle=darkMode?'#221530':'#2a2038';
+    for(let bx=-off-300; bx<W+300; bx+=300) drawBrokenWall(bx, H*0.56);
+    ctx.restore();
+  }
 }
 
 function drawSceneDecorations(){
@@ -931,6 +1151,11 @@ function drawSceneDecorations(){
   } else if(actIndex===ACT_FINAL){
     drawThrone(W/2-(camX*0.2%80), H*0.58, darkMode);
     for(let i=0;i<12;i++) drawSkullDecor(38+i*92-nearOff%92, H*0.79+Math.sin(i*1.7)*6, i);
+    // 近景地面碎石散落（确定性 index 伪随机，视差 0.8）
+    ctx.save(); ctx.fillStyle=darkMode?'rgba(30,20,40,0.9)':'rgba(46,36,58,0.9)';
+    for(let i=0;i<26;i++){ const rx=(i*74 - nearOff%74*3 + i*13)%(W+80)-40; const ry=H*0.86+hnoise(i)*40; const s=3+hnoise(i+9)*7;
+      ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.6); ctx.lineTo(rx+s*1.8,ry); ctx.lineTo(rx+s*0.9,ry+s*0.5); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
   }
 }
 function drawWallTorch(x,y,t){
@@ -994,11 +1219,12 @@ function drawEnglandBackground(t){
   });
   // --- 中景：右侧英格兰港口灯塔 ---
   drawLighthouse(W*0.16 - (camX*0.2)%40, horizon, t);
-  // --- 海面三层波浪 ---
+  // --- 海面三层波浪（远/中/近，各自速度不同的正弦波） ---
   ctx.fillStyle='#0a1e35'; ctx.fillRect(0,horizon,W,H-horizon);   // 海底基色
-  drawWaveLayer(horizon+6,  4, 0.010, 0.6, '#0a1e35', t);          // 底层：低频慢速
-  drawWaveLayer(horizon+22, 5, 0.020, 1.1, '#0d2a4a', t);          // 中层
-  drawWaveHighlight(horizon+14, 3, 0.045, 2.0, 'rgba(100,160,220,0.4)', t); // 顶层高光：高频快速
+  drawWaveLayer(horizon+6,  4, 0.010, 0.6, '#0a1e35', t);          // 远层：低频慢速
+  drawWaveLayer(horizon+22, 5, 0.020, 1.1, '#0d2a4a', t);          // 中层：中频中速
+  drawWaveLayer(horizon+42, 7, 0.032, 1.9, '#103254', t);          // 近层：高频快速
+  drawWaveHighlight(horizon+14, 3, 0.045, 2.0, 'rgba(100,160,220,0.4)', t); // 顶层高光
   // --- 月光倒影：月亮正下方竖向光柱，高度随波浪抖动 ---
   ctx.save();
   const beamW=24, jitter=Math.sin(t*0.12)*6;
@@ -1124,6 +1350,230 @@ function drawAmbientBg(){
   const fogA = darkMode?0.14:(theme.fog||0.05);
   ctx.fillStyle = 'rgba(180,180,210,'+fogA+')';
   for(let i=0;i<3;i++){ const y=H*0.55 + i*40 + Math.sin(frame*0.01+i)*8; ctx.fillRect(0,y,W,26); }
+  ctx.restore();
+}
+
+/* ============================================================
+   新增：各幕动态特效层（帧驱动 / 确定性伪随机 / 固定粒子池，无外部资源）
+   全部屏幕空间绘制，仅影响渲染，不参与碰撞/物理。
+   ============================================================ */
+// 第五幕：Boss<30% 血量时天空渐染暗红（背景阶段调用）
+function drawFinalSkyTint(){
+  if(actIndex!==ACT_FINAL || !(boss && boss.kind==='claudius' && !boss.dead)) return;
+  const ratio=boss.hp/boss.maxHp; if(ratio>=0.3) return;
+  const k=clamp((0.3-ratio)/0.3,0,1)*(0.85+0.15*Math.sin(frame*0.08));
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgba(96,12,18,'+(0.42*k).toFixed(3)+')');
+  g.addColorStop(0.5,'rgba(56,8,16,'+(0.30*k).toFixed(3)+')');
+  g.addColorStop(1,'rgba(20,2,8,'+(0.14*k).toFixed(3)+')');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+// 第一幕：云层缓慢遮月，制造冷月闪烁
+function drawMoonCloudFlicker(mx,my){
+  if(actIndex!==ACT_CASTLE) return;
+  ctx.save();
+  for(let i=0;i<3;i++){
+    const speed=0.18+i*0.09;
+    let x=((frame*speed + i*170) % (W+320)) - 160;
+    const y=my-8+i*10;
+    ctx.fillStyle='rgba(22,26,46,0.5)';
+    ctx.beginPath(); ctx.ellipse(x,y,84,20,0,0,6.283); ctx.fill();
+  }
+  ctx.restore();
+}
+// 第五幕远景：城堡废墟轮廓（断裂塔楼，period 360）
+function drawRuinSilhouette(bx, baseY){
+  ctx.beginPath();
+  ctx.moveTo(bx,H); ctx.lineTo(bx,baseY+30);
+  ctx.lineTo(bx+30,baseY+30); ctx.lineTo(bx+30,baseY-10);
+  ctx.lineTo(bx+50,baseY-10); ctx.lineTo(bx+56,baseY+6); ctx.lineTo(bx+70,baseY-30);
+  ctx.lineTo(bx+90,baseY-30); ctx.lineTo(bx+96,baseY+4); ctx.lineTo(bx+120,baseY+4);
+  ctx.lineTo(bx+120,baseY-64); ctx.lineTo(bx+150,baseY-64); ctx.lineTo(bx+150,baseY+10);
+  ctx.lineTo(bx+190,baseY+10); ctx.lineTo(bx+200,baseY-22); ctx.lineTo(bx+220,baseY+18);
+  ctx.lineTo(bx+260,baseY+18); ctx.lineTo(bx+270,baseY-42); ctx.lineTo(bx+300,baseY-42);
+  ctx.lineTo(bx+300,baseY+30); ctx.lineTo(bx+360,baseY+30); ctx.lineTo(bx+360,H);
+  ctx.closePath(); ctx.fill();
+}
+// 第五幕中景：塌陷墙壁 + 断裂柱子（period 300）
+function drawBrokenWall(bx,y){
+  ctx.beginPath();
+  ctx.moveTo(bx,H); ctx.lineTo(bx,y);
+  ctx.lineTo(bx+40,y); ctx.lineTo(bx+48,y-30); ctx.lineTo(bx+60,y+4);
+  ctx.lineTo(bx+90,y-14); ctx.lineTo(bx+96,y+10); ctx.lineTo(bx+130,y+10);
+  ctx.lineTo(bx+130,H); ctx.closePath(); ctx.fill();
+  const colx=bx+210;
+  ctx.fillRect(colx, y-46, 16, H-(y-46));
+  ctx.fillRect(colx-5, y-46, 26, 6);
+  ctx.save(); ctx.translate(colx+8,y-52); ctx.rotate(0.32); ctx.fillRect(-9,-8,18,14); ctx.restore();
+}
+// 第一幕城垛上的三角旗帜（随风摆动）
+function drawParapetFlag(x,y,t){
+  ctx.save();
+  ctx.strokeStyle='#2c2636'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-26); ctx.stroke();
+  const w=Math.sin(t)*4;
+  ctx.fillStyle='#6a1e2a';
+  ctx.beginPath(); ctx.moveTo(x,y-26); ctx.lineTo(x+22+w,y-21); ctx.lineTo(x,y-15); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+// 第二幕中景：宫廷柱廊透视（左右各 2 根高柱）+ 墙面挂毯几何花纹
+function drawCourtColonnade(){
+  ctx.save();
+  const off=parallaxOff(0.5,120), top=H*0.16, bot=H*0.64;
+  ctx.strokeStyle='rgba(150,96,158,0.20)'; ctx.lineWidth=1;
+  for(let bx=-off-120; bx<W+120; bx+=120){
+    for(let yy=top; yy<bot; yy+=44){
+      ctx.beginPath(); ctx.moveTo(bx+60,yy); ctx.lineTo(bx+90,yy+22); ctx.lineTo(bx+60,yy+44); ctx.lineTo(bx+30,yy+22); ctx.closePath(); ctx.stroke();
+    }
+  }
+  [{x:52,w:34},{x:150,w:22},{x:W-52,w:34},{x:W-150,w:22}].forEach(c=>drawTallColumn(c.x,c.w));
+  ctx.restore();
+}
+function drawTallColumn(cx,w){
+  const top=H*0.08, bot=H*0.7;
+  const g=ctx.createLinearGradient(cx-w/2,0,cx+w/2,0);
+  g.addColorStop(0,'rgba(40,30,52,0.9)'); g.addColorStop(0.5,'rgba(74,58,92,0.9)'); g.addColorStop(1,'rgba(34,24,44,0.9)');
+  ctx.fillStyle=g; ctx.fillRect(cx-w/2, top, w, bot-top);
+  ctx.fillStyle='rgba(96,76,116,0.9)'; ctx.fillRect(cx-w/2-5, top, w+10, 12); ctx.fillRect(cx-w/2-6, bot-10, w+12, 12);
+  ctx.strokeStyle='rgba(20,14,28,0.5)'; ctx.lineWidth=1;
+  for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(cx+i*w*0.28,top+12); ctx.lineTo(cx+i*w*0.28,bot-10); ctx.stroke(); }
+}
+// 第三幕中景：破败电线杆
+function drawPowerPole(x,y){
+  ctx.fillStyle='rgba(24,16,26,0.85)';
+  ctx.fillRect(x-2,y-72,4,72);
+  ctx.fillRect(x-16,y-58,32,4);
+  ctx.fillRect(x-12,y-48,24,3);
+}
+// ---- 动态特效总调度 ----
+function drawActAmbientFx(){
+  if(actIndex===ACT_CASTLE){ drawActGuards(); drawGhostFigure(); drawCastleReaper(); drawGroundFog(); }
+  else if(actIndex===ACT_COURT){ drawWindowLight(); drawPoloniusPeek(); }
+  else if(actIndex===ACT_ESCAPE){ drawEscapeCrow(); }
+  else if(actIndex===ACT_ENGLAND){ drawSeagulls(); drawEnglandSplash(); drawThinRain(); }
+}
+// 第一幕：地面浓雾滚动（固定 14 团，帧驱动位置，无每帧 new）
+function drawGroundFog(){
+  ctx.save();
+  const N=14, baseY=H*0.80;
+  for(let i=0;i<N;i++){
+    const speed=0.25+hnoise(i)*0.45, w=90+hnoise(i+3)*80;
+    let x=((i*140 - frame*speed) % (W+240)); if(x<0)x+=W+240; x-=120;
+    const y=baseY + Math.sin(frame*0.01+i)*8 + hnoise(i+7)*24;
+    const a=0.05+hnoise(i+1)*0.06;
+    const g=ctx.createRadialGradient(x,y,4,x,y,w);
+    g.addColorStop(0,'rgba(190,196,216,'+a.toFixed(3)+')'); g.addColorStop(1,'rgba(190,196,216,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(x,y,w,w*0.4,0,0,6.283); ctx.fill();
+  }
+  ctx.restore();
+}
+// 第一幕：背景守卫剪影缓慢左右巡逻
+function drawActGuards(){
+  ctx.save();
+  for(let i=0;i<3;i++){
+    const cx=W*(0.22+i*0.28)+Math.sin(frame*0.005+i*2.1)*90;
+    const dir=Math.cos(frame*0.005+i*2.1)>=0?1:-1;
+    drawGuardSilhouette(cx, H*0.46, dir);
+  }
+  ctx.restore();
+}
+function drawGuardSilhouette(x,y,dir){
+  ctx.save(); ctx.translate(x,y); ctx.scale(dir,1);
+  ctx.fillStyle='rgba(8,8,16,0.55)';
+  ctx.fillRect(-4,-26,8,26);
+  ctx.beginPath(); ctx.arc(0,-30,5,0,6.283); ctx.fill();
+  ctx.fillRect(-6,-34,12,4);
+  const st=Math.sin(frame*0.15)*3;
+  ctx.fillRect(-4,0,3,10+st); ctx.fillRect(2,0,3,10-st);
+  ctx.fillRect(7,-40,2,44);
+  ctx.beginPath(); ctx.moveTo(8,-40); ctx.lineTo(5,-46); ctx.lineTo(11,-46); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+// 第一幕：老哈姆雷特鬼魂半透明身影（呼吸式淡入淡出 0→0.4→0）
+function drawGhostFigure(){
+  const a=0.2-0.2*Math.cos(frame*0.018); if(a<0.02) return;
+  const x=W*0.5+Math.sin(frame*0.0035)*200, y=H*0.36+Math.sin(frame*0.02)*6;
+  ctx.save(); ctx.globalAlpha=a;
+  const g=ctx.createRadialGradient(x,y,4,x,y,54);
+  g.addColorStop(0,'rgba(150,190,220,0.5)'); g.addColorStop(1,'rgba(150,190,220,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,54,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(184,212,236,0.7)';
+  ctx.beginPath(); ctx.moveTo(x,y-40); ctx.lineTo(x-14,y+42); ctx.lineTo(x+14,y+42); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(x,y-40,10,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(220,200,140,0.7)';
+  for(let i=-1;i<=1;i++) ctx.fillRect(x+i*7-1,y-56,3,8);
+  ctx.fillRect(x-10,y-50,20,3);
+  ctx.fillStyle='rgba(30,50,70,0.6)'; ctx.fillRect(x-5,y-42,3,3); ctx.fillRect(x+2,y-42,3,3);
+  ctx.restore();
+}
+// 第一幕：偶发死神轮廓从一侧飘过（约每 70s 一次）
+function drawCastleReaper(){
+  const period=4200, cross=560, ph=frame%period; if(ph>=cross) return;
+  const p=ph/cross, x=-80+p*(W+160), y=H*0.30+Math.sin(p*8)*22, a=Math.sin(p*Math.PI)*0.5;
+  ctx.save(); ctx.globalAlpha=a; ctx.translate(x,y);
+  ctx.fillStyle='rgba(4,4,10,0.9)';
+  ctx.beginPath(); ctx.moveTo(0,-30); ctx.quadraticCurveTo(-20,-10,-16,46); ctx.lineTo(16,46); ctx.quadraticCurveTo(20,-10,0,-30); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,0.92)'; ctx.beginPath(); ctx.ellipse(0,-18,7,10,0,0,6.283); ctx.fill();
+  ctx.strokeStyle='rgba(4,4,10,0.9)'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(18,-42); ctx.lineTo(18,48); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(18,-42); ctx.quadraticCurveTo(-2,-54,-14,-42); ctx.stroke();
+  ctx.restore();
+}
+// 第二幕：宫廷窗格光影在地面缓慢移动
+function drawWindowLight(){
+  ctx.save();
+  for(let i=0;i<3;i++){
+    const x=((frame*0.25 + i*260) % (W+260)) - 130;
+    ctx.fillStyle='rgba(220,214,255,0.05)';
+    ctx.beginPath(); ctx.moveTo(x,H*0.55); ctx.lineTo(x+70,H*0.55); ctx.lineTo(x+120,H); ctx.lineTo(x+50,H); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(40,30,52,0.06)'; ctx.fillRect(x+34,H*0.55,4,H*0.45);
+  }
+  ctx.restore();
+}
+// 第二幕：波洛涅斯剪影在右侧帷幕后偷窥（缓慢探出缩回，位于帷幕遮挡层之下）
+function drawPoloniusPeek(){
+  const emerge=clamp(Math.sin(frame*0.006),0,1); if(emerge<=0.02) return;
+  const bx=W-40-emerge*30, by=H*0.42;
+  ctx.save(); ctx.globalAlpha=0.5; ctx.fillStyle='rgba(20,10,26,0.85)';
+  ctx.beginPath(); ctx.arc(bx,by,9,0,6.283); ctx.fill();
+  ctx.fillRect(bx-4,by+9,18,42);
+  ctx.fillStyle='rgba(180,180,190,0.5)';
+  ctx.beginPath(); ctx.moveTo(bx-6,by+2); ctx.lineTo(bx+2,by+16); ctx.lineTo(bx+6,by+2); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+// 第三幕：偶发乌鸦剪影从左到右快速掠过（约每 37s 一次）
+function drawEscapeCrow(){
+  const period=2200, cross=180, ph=frame%period; if(ph>=cross) return;
+  const p=ph/cross, x=-40+p*(W+80), y=H*0.22+Math.sin(p*10)*30, fl=Math.sin(frame*0.5)*6;
+  ctx.save(); ctx.strokeStyle='rgba(6,6,12,0.85)'; ctx.lineWidth=2.5;
+  ctx.beginPath(); ctx.moveTo(x-9,y-fl); ctx.lineTo(x,y); ctx.lineTo(x+9,y-fl); ctx.stroke();
+  ctx.restore();
+}
+// 第四幕：海鸥剪影 V 形飞过
+function drawSeagulls(){
+  const period=1600, cross=520, ph=frame%period; if(ph>=cross) return;
+  const p=ph/cross, bx=-60+p*(W+120), by=H*0.20+Math.sin(p*4)*14, fl=Math.sin(frame*0.3)*4;
+  ctx.save(); ctx.strokeStyle='rgba(220,225,235,0.5)'; ctx.lineWidth=1.6;
+  [[0,0],[-16,10],[16,10],[-32,20],[32,20]].forEach(([dx,dy])=>{ const x=bx+dx,y=by+dy;
+    ctx.beginPath(); ctx.moveTo(x-6,y+fl*0.5); ctx.quadraticCurveTo(x,y-3,x,y); ctx.quadraticCurveTo(x,y-3,x+6,y+fl*0.5); ctx.stroke(); });
+  ctx.restore();
+}
+// 第四幕：海浪拍打浪花溅起（白色粒子弧线，帧驱动无 new）
+function drawEnglandSplash(){
+  const horizon=H*0.66; ctx.save(); ctx.strokeStyle='rgba(220,240,255,0.4)'; ctx.lineWidth=1.4;
+  for(let i=0;i<6;i++){
+    const ph=(frame*0.05+i*1.3)%6.283, s=Math.sin(ph); if(s<0.4) continue;
+    let x=((i*180 - (camX*0.5)) % (W+180)); x=((x%(W+180))+(W+180))%(W+180)-90;
+    const y=horizon+18+Math.sin(i)*10, h=10+s*16;
+    for(let d=-2;d<=2;d++){ ctx.beginPath(); ctx.moveTo(x,y); ctx.quadraticCurveTo(x+d*6,y-h,x+d*12,y-h*0.3); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+// 第四幕：风雨斜线（细）
+function drawThinRain(){
+  ctx.save(); ctx.strokeStyle='rgba(180,200,225,0.14)'; ctx.lineWidth=1;
+  for(let i=0;i<50;i++){ const seed=i*53; const x=((seed*17)%W + frame*3)%W; const y=((seed*29)%H + frame*7)%H;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-3,y+12); ctx.stroke(); }
   ctx.restore();
 }
 
@@ -2141,6 +2591,36 @@ function drawTrigger(tr){
   ctx.fillText('跳上来即可进入（可选）', tr.x+tr.w/2, tr.y-12);
     ctx.fillStyle='#1a1206'; ctx.font='18px serif'; ctx.fillText('★', tr.x+tr.w/2, tr.y+tr.h/2+6);
     ctx.restore();
+  } else if(tr.type==='ladder'){
+    // 梯子：两根立柱 + 横档，顶部提示"↑ 攀爬"
+    ctx.save();
+    ctx.strokeStyle='#7a5a34'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(tr.x+5, tr.y); ctx.lineTo(tr.x+5, tr.y+tr.h);
+    ctx.moveTo(tr.x+tr.w-5, tr.y); ctx.lineTo(tr.x+tr.w-5, tr.y+tr.h); ctx.stroke();
+    ctx.strokeStyle='#a5793f'; ctx.lineWidth=2;
+    for(let y=tr.y+8; y<tr.y+tr.h; y+=16){ ctx.beginPath(); ctx.moveTo(tr.x+5,y); ctx.lineTo(tr.x+tr.w-5,y); ctx.stroke(); }
+    ctx.fillStyle='rgba(255,230,150,'+(0.55+0.25*Math.sin(frame*0.12))+')';
+    ctx.font='bold 11px "Courier New",monospace'; ctx.textAlign='center';
+    ctx.fillText('↑攀爬', tr.x+tr.w/2, tr.y-6);
+    ctx.restore();
+  } else if(tr.type==='door'){
+    // 舱门：木门 + 拱顶 + 门环
+    ctx.save();
+    ctx.fillStyle='#3b2416'; ctx.fillRect(tr.x, tr.y, tr.w, tr.h);
+    ctx.fillStyle='#5e3d22'; ctx.fillRect(tr.x+2, tr.y+2, tr.w-4, tr.h-4);
+    ctx.strokeStyle='#2a1a0e'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(tr.x+tr.w/2, tr.y+3); ctx.lineTo(tr.x+tr.w/2, tr.y+tr.h-3); ctx.stroke();
+    ctx.fillStyle='#c9a24a'; ctx.beginPath(); ctx.arc(tr.x+tr.w/2, tr.y+tr.h*0.5, 2.5, 0, 6.283); ctx.fill();
+    ctx.fillStyle='rgba(255,220,150,'+(0.4+0.25*Math.sin(frame*0.1))+')';
+    ctx.font='bold 10px "Courier New",monospace'; ctx.textAlign='center';
+    ctx.fillText('舱门', tr.x+tr.w/2, tr.y-4);
+    ctx.restore();
+  } else if(tr.type==='peak'){
+    if(tr.fired) return;
+    const a=0.12+0.12*Math.sin(frame*0.09);
+    ctx.fillStyle='rgba(255,230,150,'+a+')'; ctx.fillRect(tr.x,tr.y,tr.w,tr.h);
+    ctx.fillStyle='rgba(255,238,180,0.8)'; ctx.font='16px serif'; ctx.textAlign='center';
+    ctx.fillText('✦', tr.x+tr.w/2, tr.y+tr.h*0.7);
   }
 }
 function drawBowPickup(bp){
@@ -2300,7 +2780,9 @@ function safeSpawnPoint(lv, x, preferY){
     if(pointOverlapsBonusEntrance(lv, sx, s.y)) continue;
     // 软性惩罚：远离趣味入口攀爬塔（<150px 记大额惩罚，仍保留可行解不至于无点可选）
     const colPen = bonusColumnDist(lv, sx)<150 ? 600 : 0;
-    const score=Math.abs(sx-(Number.isFinite(x)?x:s.mid)) + Math.abs((preferY||GROUND_TOP)-s.y)*2 + colPen;
+    // 软性惩罚：远离分支入口（地洞口/宝箱/攀爬台），避免复活落在分支入口误触/坑边
+    const brPen = branchAvoidDist(lv, sx)<120 ? 500 : 0;
+    const score=Math.abs(sx-(Number.isFinite(x)?x:s.mid)) + Math.abs((preferY||GROUND_TOP)-s.y)*2 + colPen + brPen;
     if(score<bestScore){ best={x:sx,y:s.y}; bestScore=score; }
   }
   if(best) return best;
@@ -2523,7 +3005,9 @@ function buildAct(idx){
   }
   ensureTraversable(lv);          // 通行性保障：确保任何地刺/坑洞段都有可跳过的落脚点
   if(idx!==ACT_LAKE) createBonusEntrance(lv, idx);
-  sanitizeLevelCheckpoints(lv);    // 统一校正出生点/检查点，避免坑内、空中、边缘或入口触发区复活
+  if(idx!==ACT_LAKE) createBranchPaths(lv, idx);   // 垂直分叉路（额外探索分支，不破坏主线）
+  ensureTraversable(lv);          // 分支开挖后再次保障主线可跳跃通过（幂等）
+  sanitizeLevelCheckpoints(lv);    // 统一校正出生点/检查点，避免坑内、空中、边缘或入口触发区/分支入口复活
   lv.secretTotal = lv.chests.length;
   return lv;
 }
@@ -3314,6 +3798,178 @@ function createBonusEntrance(lv, mainAct){
   if(lv.enemySpawns) lv.enemySpawns = lv.enemySpawns.filter(s=>s.x<safeMin || s.x>safeMax);
   if(lv.hazards) lv.hazards = lv.hazards.filter(h=>h.x+(h.w||0)<safeMin || h.x>safeMax);
 }
+
+/* =========================================================================
+   垂直分叉路机制 createBranchPaths(lv, actIdx)
+   —— 每幕新增"额外探索分支"，绝不破坏主线通关。在 createBonusEntrance 之后调用，
+      随后再次 ensureTraversable + sanitizeLevelCheckpoints（见 buildAct 尾部）。
+   物理依据：单跳峰高≈128px（校验保守值 MAX_JUMP_UP=118），无二段跳。
+   "连跳2次" = 借助一块踏脚台：地面→踏脚台(升96)→高台(再升104)，
+      高台离地 200px（>118，单跳直达不了），必须连跳两次。
+   ========================================================================= */
+// 分支入口的横向回避距离（供检查点/出生点回避，仿照 bonusColumnDist）
+function branchAvoidDist(lv, x){
+  let d=Infinity;
+  (lv._branchAvoid||[]).forEach(a=>{ d=Math.min(d, Math.abs(a.x-x)); });
+  return d;
+}
+function branchGrounds(lv){
+  return (lv.platforms||[]).filter(p=>p.type==='ground'&&Math.abs(p.y-GROUND_TOP)<1)
+    .map(p=>({x1:p.x,x2:p.x+p.w,ref:p})).sort((a,b)=>a.x1-b.x1);
+}
+function branchNearBonus(lv, x, pad){ return bonusColumnDist(lv, x) < pad; }
+function branchNearBoss(lv, x, pad){
+  if(lv.bossArena && x > lv.bossArena.x - pad) return true;
+  if(lv.bossPlan){ for(const b of lv.bossPlan){ if(b && Number.isFinite(b.triggerX) && Math.abs(b.triggerX-x)<pad+260) return true; } }
+  return false;
+}
+function branchRegionHasHazard(lv, x0, x1){
+  return (lv.hazards||[]).some(h=> h.x < x1 && h.x+(h.w||0) > x0);
+}
+function branchClearRegion(lv, x0, x1){
+  if(lv.enemySpawns) lv.enemySpawns = lv.enemySpawns.filter(s=> s.x<x0 || s.x>x1);
+  if(lv.hazards) lv.hazards = lv.hazards.filter(h=> h.x+(h.w||0)<x0 || h.x>x1);
+}
+// 在地面段上寻找可安放"上置结构（占地 footW）"的起跳中心 x，避开 bonus/boss/已占用/地刺
+// 说明：分支平台（踏脚台/甲板/多层）为悬浮平台，可向右悬挑；只需起跳点脚下有地面即可
+function pickBranchAnchor(lv, targetX, footW, occupied){
+  const segs=branchGrounds(lv); let best=null,bd=Infinity;
+  for(const s of segs){
+    const lo=s.x1+50, hi=s.x2-50;     // 起跳点须在地面段内且距边≥50
+    if(hi<lo) continue;
+    for(let cx=Math.ceil(lo); cx<=hi; cx+=24){
+      if(branchNearBonus(lv,cx,200)) continue;
+      if(branchNearBoss(lv,cx,300)) continue;
+      if(occupied.some(o=>Math.abs(o-cx)<Math.max(280,footW+80))) continue;
+      if(branchRegionHasHazard(lv,cx-42,cx+42)) continue;   // 起跳点脚下无坑/地刺
+      const d=Math.abs(cx-targetX); if(d<bd){ bd=d; best=cx; }
+    }
+  }
+  return best;
+}
+// 为地下密道寻找一段"够宽、可开缺口并两侧留地"的地面段（扫描段内所有可行缺口位置）
+function pickCarveSpot(lv, targetX, gapW, occupied){
+  const segs=branchGrounds(lv); let best=null,bd=Infinity;
+  for(const s of segs){
+    const w=s.x2-s.x1; if(w < gapW+160) continue;   // 两侧各留 ≥80px 地面
+    const loG=s.x1+80, hiG=s.x2-80-gapW;
+    for(let gapX=Math.ceil(loG); gapX<=hiG; gapX+=24){
+      const cx=gapX+gapW/2;
+      if(branchNearBonus(lv,cx,240)) continue;
+      if(branchNearBoss(lv,cx,340)) continue;
+      if(occupied.some(o=>Math.abs(o-cx)<340)) continue;
+      const d=Math.abs(cx-targetX); if(d<bd){ bd=d; best={gapX,cx,seg:s}; }
+    }
+  }
+  return best;
+}
+// 在主线地面上开一处缺口（拆分覆盖的地面段），返回是否成功
+function carveGroundGap(lv, gapX, gapW){
+  const gx2=gapX+gapW; const keep=[]; const add=[]; let changed=false;
+  for(const p of lv.platforms){
+    if(p.type!=='ground' || Math.abs(p.y-GROUND_TOP)>=1){ keep.push(p); continue; }
+    const px2=p.x+p.w;
+    if(px2<=gapX || p.x>=gx2){ keep.push(p); continue; } // 不相交
+    changed=true;
+    if(p.x < gapX-6){ add.push(Object.assign({},p,{w:gapX-p.x})); }        // 左段
+    if(px2 > gx2+6){ add.push(Object.assign({},p,{x:gx2, w:px2-gx2})); }   // 右段
+  }
+  if(changed){ lv.platforms = keep.concat(add); }
+  return changed;
+}
+// 通用：水平中段"向上高台分支"（连跳2次 + 高台隐藏宝箱触发区）
+function addUpperBranch(lv, cx){
+  const stepY=GROUND_TOP-96, topY=GROUND_TOP-200;
+  lv.platforms.push({x:cx-38, y:stepY, w:76,  h:14, type:'plat', branch:true});           // 踏脚台（连跳第1跳）
+  lv.platforms.push({x:cx-24, y:topY,  w:130, h:14, type:'plat', branch:true, branchTop:true}); // 高台（连跳第2跳）
+  lv.chests.push({x:cx+26, y:topY-22, w:28, h:22, open:false, taken:false, reward:'score', branch:true, label:'发现隐藏宝藏！'});
+  branchClearRegion(lv, cx-70, cx+90);
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx, r:120});
+}
+// 通用：水平中后段"向下密道分支"（同关卡地形实现进/出，主线用踏脚石安全跨越）
+function addUnderPassage(lv, spot){
+  const gapX=spot.gapX, gapW=200, gx2=gapX+gapW;
+  const floorY=GROUND_TOP+78;
+  // 先移除缺口横向范围内、贴近地表的旧空中平台，避免挡住下落/顶部跨越
+  lv.platforms = lv.platforms.filter(p=> p.type==='ground' || p.branch ||
+    !(p.x < gx2+8 && p.x+p.w > gapX-8 && p.y < GROUND_TOP && p.y > GROUND_TOP-170));
+  carveGroundGap(lv, gapX, gapW);
+  // 主线安全跨越：顶部两块踏脚石（覆盖缺口，ensureTraversable 视为已补）
+  lv.platforms.push({x:gapX+22,  y:GROUND_TOP-56, w:60, h:14, type:'plat', branch:true, bridge:true});
+  lv.platforms.push({x:gapX+118, y:GROUND_TOP-56, w:60, h:14, type:'plat', branch:true, bridge:true});
+  // 下层密道地板（一段可行走的下沉通道）
+  lv.platforms.push({x:gapX+18, y:floorY, w:164, h:14, type:'plat', branch:true, tunnel:true});
+  // 密道尽头小奖励触发区（音效+提示文字，复用宝箱机制）
+  lv.chests.push({x:gapX+142, y:floorY-22, w:28, h:22, open:false, taken:false, reward:'ammo', branch:true, label:'密道尽头 · 发现补给！'});
+  // 出口踏脚台：从密道地板跳回主线右侧地面
+  lv.platforms.push({x:gapX+134, y:GROUND_TOP-8, w:58, h:14, type:'plat', branch:true});
+  // 入口/密道区域清怪清陷阱，保证进出安全
+  branchClearRegion(lv, gapX-30, gx2+30);
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:spot.cx, r:150});
+}
+function createBranchPaths(lv, actIdx){
+  lv._branchAvoid = lv._branchAvoid||[];
+  const W=lv.width, occupied=[];
+  // 各幕的目标横向位置（按需回避 boss/彩蛋区，act5 放在墓地/前段走廊避开双 Boss 场）
+  let upperT, underT, featT;
+  if(actIdx===ACT_FINAL){ upperT=W*0.11; underT=W*0.19; featT=W*0.43; }
+  else { upperT=W*0.44; underT=W*0.66; featT=W*0.30; }
+  // (1) 向上高台分支（五幕都加）
+  const upX = pickBranchAnchor(lv, upperT, 160, occupied);
+  if(upX!=null){ addUpperBranch(lv, upX); occupied.push(upX); }
+  // (2) 向下密道分支（五幕都加）
+  const spot = pickCarveSpot(lv, underT, 200, occupied);
+  if(spot){ addUnderPassage(lv, spot); occupied.push(spot.cx); }
+  // (3) 各幕特色分支
+  if(actIdx===ACT_CASTLE){ addCastleParapet(lv, pickBranchAnchor(lv, featT, 200, occupied), occupied); }
+  else if(actIdx===ACT_ENGLAND){ addShipCabin(lv, pickBranchAnchor(lv, featT, 300, occupied), occupied); }
+  else if(actIdx===ACT_FINAL){ addCastleFloors(lv, pickBranchAnchor(lv, featT, 300, occupied), occupied); }
+}
+// 第一幕特色：城垛可攀爬区（梯子触发区 → 城垛顶平台 + 俯瞰提示）
+function addCastleParapet(lv, cx, occupied){
+  if(cx==null) return;
+  const topY=GROUND_TOP-150;
+  lv.platforms.push({x:cx-70, y:topY, w:150, h:14, type:'plat', branch:true, parapet:true}); // 城垛顶
+  // 梯子触发区：贴城垛左沿，从地面直达城垛顶
+  lv.triggers.push({x:cx-70-14, y:topY, w:28, h:GROUND_TOP-topY, type:'ladder', persist:true, key:'ladder_'+Math.round(cx)});
+  // 俯瞰提示（登顶触发一次）
+  lv.triggers.push({x:cx-30, y:topY-46, w:100, h:44, type:'peak', fired:false, key:'peak_'+Math.round(cx)});
+  lv.chests.push({x:cx+30, y:topY-22, w:28, h:22, open:false, taken:false, reward:'score', branch:true, viaLadder:true, label:'城垛藏宝！'});
+  branchClearRegion(lv, cx-110, cx+110);
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx, r:110});
+  occupied.push(cx);
+}
+// 第四幕特色：船舱门 → 小战斗区（独立平台 + 1~2 敌人 + 宝箱），打完可回主线
+function addShipCabin(lv, cx, occupied){
+  if(cx==null) return;
+  const stepY=GROUND_TOP-70, deckY=GROUND_TOP-150;
+  // 先清理入口区地面陷阱/散兵（在加入甲板战斗兵之前，避免被误删）
+  branchClearRegion(lv, cx-60, cx+210);
+  lv.platforms.push({x:cx-38, y:stepY, w:76,  h:14, type:'plat', branch:true});            // 上船踏脚台（起跳点在 cx）
+  lv.platforms.push({x:cx-20, y:deckY, w:220, h:14, type:'plat', branch:true, cabin:true}); // 船舱甲板（战斗区，向右悬挑）
+  // 舱门（甲板右侧）：门形状 + 触发区，进入提示
+  lv.triggers.push({x:cx+168, y:deckY-52, w:30, h:52, type:'door', persist:true, fired:false, key:'door_'+Math.round(cx)});
+  // 小战斗区：1~2 名敌人在甲板上
+  lv.enemySpawns.push({type:'patrol', x:cx+70,  y:deckY});
+  lv.enemySpawns.push({type:'archer', x:cx+150, y:deckY});
+  lv.chests.push({x:cx+110, y:deckY-22, w:28, h:22, open:false, taken:false, reward:'ammo', branch:true, label:'船舱宝箱！'});
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx, r:120});
+  occupied.push(cx);
+}
+// 第五幕特色：城堡多层楼（多层平台 + 楼梯连接，可在不同高度作战），不碰 Boss 主线
+function addCastleFloors(lv, cx, occupied){
+  if(cx==null) return;
+  const t1=GROUND_TOP-80, t2=GROUND_TOP-160, t3=GROUND_TOP-240;
+  lv.platforms.push({x:cx-70, y:t1, w:150, h:14, type:'plat', branch:true, floorTier:1});
+  lv.platforms.push({x:cx-10, y:t2, w:150, h:14, type:'plat', branch:true, floorTier:2});
+  lv.platforms.push({x:cx+50, y:t3, w:150, h:14, type:'plat', branch:true, floorTier:3});
+  lv.enemySpawns.push({type:'skeleton', x:cx,    y:t1});
+  lv.enemySpawns.push({type:'patrol',   x:cx+60, y:t2});
+  lv.chests.push({x:cx+110, y:t3-22, w:28, h:22, open:false, taken:false, reward:'score', branch:true, label:'城堡顶层 · 王室珍藏！'});
+  branchClearRegion(lv, cx-90, cx+210);
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx, r:130});
+  occupied.push(cx);
+}
 function saveBonusReturn(entranceTrigger){
   return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats), entrance: entranceTrigger ? {x:entranceTrigger.x, y:entranceTrigger.y, w:entranceTrigger.w, h:entranceTrigger.h} : null };
 }
@@ -3397,6 +4053,7 @@ function loadLevel(idx, keepScore){
   // 湖边彩蛋成功后，奥菲莉亚在英格兰幕与终章全程助战
   if((idx===ACT_ENGLAND||idx===ACT_FINAL) && opheliaSaved){ companion=makeCompanion('ophelia'); }
   boss=null; bossStarted=false; activeBossEntry=null; poisonT=0;
+  shockwaves=[];
   respawn={x:level.playerStart.x, y:level.playerStart.y};
   checkpointActive=null; goalReached=false; deathFade=0; midFired={}; bowHintT=0;
   goalLocked=false;
@@ -3578,7 +4235,11 @@ function updatePlayer(){
   // 跳跃（土狼时间 + 缓冲）
   if(p.onGround) p.coyote=6; else if(p.coyote>0) p.coyote--;
   if(jumpEdge) p.jumpBuf=7; else if(p.jumpBuf>0) p.jumpBuf--;
-  if(p.jumpBuf>0 && p.coyote>0){ p.vy=JUMP_VEL; p.onGround=false; p.coyote=0; p.jumpBuf=0; Sound.jump(); burst(p.x+p.w/2,p.y+p.h,'rgba(180,175,190,0.7)',5,2); }
+  // 梯子攀爬（第一幕城垛分支）：站在梯子触发区内、按上/跳键则匀速上爬，覆盖普通起跳
+  const onLadder = !bonusLevel && level.triggers && level.triggers.some(tr=>tr.type==='ladder'
+    && rectsOverlap({x:p.x,y:p.y,w:p.w,h:p.h}, tr));
+  if(onLadder && keys.jump){ p.vy=-3.4; p.onGround=false; p.coyote=0; p.jumpBuf=0; p._climbing=true; }
+  else { p._climbing=false; if(p.jumpBuf>0 && p.coyote>0){ p.vy=JUMP_VEL; p.onGround=false; p.coyote=0; p.jumpBuf=0; Sound.jump(); burst(p.x+p.w/2,p.y+p.h,'rgba(180,175,190,0.7)',5,2); } }
   if(!keys.jump && p.vy<-4) p.vy*=0.86; // 短跳
   // 攻击
   if(atkEdge && p.atkCd<=0 && p.hurtT<=0){
@@ -3777,9 +4438,10 @@ function updateTriggersAndCheckpoints(){
   for(const ch of level.chests){ if(ch.taken) continue;
     if(rectsOverlap(player, {x:ch.x,y:ch.y,w:ch.w,h:ch.h})){
       ch.taken=true; ch.open=true; stats.secrets++; Sound.pickup();
+      const tag = ch.label || '隐藏宝箱!';
       for(let i=0;i<14;i++) burst(ch.x+ch.w/2, ch.y+ch.h/2, '#e8c25a', 1, 3);
-      if(ch.reward==='ammo' && hasBow){ player.ammo=Math.min(player.maxAmmo,player.ammo+6); addFloater(ch.x+ch.w/2,ch.y-8,'隐藏宝箱! +6 箭','#c9a6ff',14); }
-      else { addScore(200); addFloater(ch.x+ch.w/2,ch.y-8,'隐藏宝箱! +200','#e8c25a',14); }
+      if(ch.reward==='ammo' && hasBow){ player.ammo=Math.min(player.maxAmmo,player.ammo+6); addFloater(ch.x+ch.w/2,ch.y-8,tag+' +6 箭','#c9a6ff',14); }
+      else { addScore(200); addFloater(ch.x+ch.w/2,ch.y-8,tag+' +200','#e8c25a',14); }
       updateHUD();
     }
   }
@@ -3823,6 +4485,18 @@ function fireTrigger(tr){
   } else if(tr.type==='bonusEntrance'){
     enterBonus(tr.bonusAct, tr);
     tr._reentryLock = true;
+  } else if(tr.type==='ladder'){
+    // 攀爬区：实际爬升在 updatePlayer 中处理；此处仅保持 persist，不做动作
+    tr.fired=false; // 允许持续绘制与后续再触发（幂等）
+  } else if(tr.type==='peak'){ // 城垛之巅：俯瞰提示（登顶一次）
+    addFloater(player.x+player.w/2, player.y-40, '登上城垛之巅 · 俯瞰全城 Elsinore', '#ffe6a0', 15);
+    Sound.checkpoint();
+  } else if(tr.type==='door'){ // 船舱门：进入小战斗区提示（首次）
+    if(!tr._announced){ tr._announced=true;
+      addFloater(player.x+player.w/2, player.y-40, '推开舱门 · 进入船舱战斗区！', '#ffe0b0', 15);
+      Sound.blip(520,.12,'square',.2);
+    }
+    tr.fired=false; // persist 门体持续绘制
   }
 }
 function updateCompanion(){
@@ -3915,6 +4589,7 @@ function damageBoss(dmg, fromX, ranged){
 function bossPhaseTransition(ph){
   boss.phase=ph; boss.invuln=90; boss.atkCd=60;
   Sound.bossPhase(); shake(10,24); flash(ph>=3?'rgba(200,20,20,0.4)':'rgba(200,120,40,0.3)',18);
+  if(boss.kind==='claudius') spawnShockwave();   // 第五幕阶段切换：全屏圆形冲击波
   for(let i=0;i<26;i++) burst(boss.x+boss.w/2, boss.y+boss.h/2, ph>=3?'#ff4040':'#ffb060', 1, 5);
   const line=(BOSS_PHASE_LINES[boss.kind]||{})[ph];
   const lines=[];
@@ -4367,6 +5042,12 @@ function updatePunkOphelia(){
   const moving=Math.abs(nextX-po.x)>0.6;
   po.dir = nextX>=po.x ? 1 : -1;
   po.x = nextX;
+  // 花瓣轨迹：走过留下粉色花瓣，2~3s 后消失（life 120~180 帧）
+  if(moving && frame%12===0 && petals.length<70){
+    petals.push({x:po.x+rand(-8,8), y:GROUND_TOP-rand(6,30), vx:rand(-.3,.3), vy:rand(.3,.9),
+      rot:rand(0,6.28), vr:rand(-.12,.12), size:rand(3,5), color: Math.random()<0.5?'#e86ab0':'#ffc0dc',
+      ph:rand(0,6.28), life:randi(120,180)});
+  }
   scheduleOpheliaAudio(po,'punk',moving);
   po.lineT--; if(po.lineT<=0){ po.lineT=220;
     const madLines=[
@@ -4391,6 +5072,12 @@ function updateCourtOphelia(){
   const moving=Math.abs(nextX-co.x)>0.4;
   co.dir = nextX>=co.x ? 1 : -1;
   co.x = nextX;
+  // 花瓣偶发飘落（粉色小花瓣，旋转 + 缓落），限量复用 petals 池
+  if(frame%36===0 && petals.length<60){
+    petals.push({x:camX+rand(0,VW), y:camY-8, vx:rand(-.4,.2), vy:rand(.4,.9),
+      rot:rand(0,6.28), vr:rand(-.1,.1), size:rand(3,5),
+      color: Math.random()<0.5?'#ffc0dc':'#f7a8cf', ph:rand(0,6.28), life:randi(220,340)});
+  }
   scheduleOpheliaAudio(co,'normal',moving);
 }
 // 奥菲莉亚三态音效调度：脚步（切换态触发不重叠）/ 笑声（随机定时）/ 环境音（循环）/ 朋克疯语吟诵
@@ -4530,6 +5217,16 @@ function render(){
   if(state===STATE.TITLE || state===STATE.NICKNAME_SETUP){ drawTitleScene(); }
   else if(state==='ending'){ drawEndingScene(); return; }
   else {
+    // 第四幕英格兰：整个视角周期性轻微倾斜 ±2°（sin 波，周期 4s，模拟船只颠簸）
+    // 仅包裹渲染阶段，物理/碰撞坐标完全不受影响。
+    const tilt = (actIndex===ACT_ENGLAND && state===STATE.PLAY)
+      ? Math.sin(frame*(Math.PI*2/240))*(2*Math.PI/180) : 0;
+    if(tilt){
+      ctx.save();
+      // 旋转前先铺满略大区域，用背景色填满旋转露出的四角，避免黑边
+      ctx.fillStyle='#071019'; ctx.fillRect(-80,-80,W+160,H+160);
+      ctx.translate(W/2,H/2); ctx.rotate(tilt); ctx.translate(-W/2,-H/2);
+    }
     drawBackground();
     drawDepthOccluders();
     // 世界层
@@ -4544,6 +5241,7 @@ function render(){
     ctx.restore();
     // 前景氛围（屏幕空间）
     drawForeground();
+    if(tilt) ctx.restore();   // 结束视角倾斜，UI 与画面特效不受倾斜影响
     // 最终战（克劳迪奥）画面特效：电闪雷鸣 / 狂风骤雨 / 进场暗化（世界之后、UI 之前，屏幕空间）
     drawFinalBattleFx();
     // 屏幕闪光
@@ -4652,17 +5350,32 @@ function _monoBackdrop(m){
   const bg=ctx.createLinearGradient(0,0,0,H);
   bg.addColorStop(0,'#050506'); bg.addColorStop(0.5,'#08080b'); bg.addColorStop(1,'#0a0a0d');
   ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
-  // 巨幅半透明向量立绘作为背景海报（放大至接近全屏高、低饱和 tint、不抢前景）
   const warm=!!(typeof opheliaSaved!=='undefined' && opheliaSaved);
+  // 头顶戏剧性背光晕（"To be or not to be" 空远沉思氛围）
+  const halo=ctx.createRadialGradient(W*0.5,H*0.30,10,W*0.5,H*0.30,240);
+  halo.addColorStop(0, warm?'rgba(60,50,28,0.5)':'rgba(34,40,66,0.5)'); halo.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=halo; ctx.fillRect(0,0,W,H);
+  // 巨幅半透明向量立绘（略微仰头：整体微幅上仰旋转；低饱和 tint；alpha≈0.22 增存在感但不抢前景）
   ctx.save();
-  ctx.globalAlpha=0.15;
-  ctx.filter='saturate(0.22) brightness(0.82) contrast(1.05)';
-  ctx.translate(W*0.5, H*0.5); ctx.scale(2.78,2.78);
+  ctx.translate(W*0.5, H*0.5); ctx.rotate(-0.035); ctx.scale(2.86,2.86);
+  // 立绘投影层（更深、下移，增强体积与海报厚度）
+  ctx.save(); ctx.globalAlpha=0.12; ctx.filter='brightness(0) blur(2px)'; ctx.translate(2.5,4); drawVectorHamletPortrait(ctx, 4, warm, !warm); ctx.restore();
+  // 立绘主层（不改公共函数，仅在此调用时叠加 tint/对比）
+  ctx.globalAlpha=0.22;
+  ctx.filter='saturate(0.26) brightness(0.86) contrast(1.12)';
   drawVectorHamletPortrait(ctx, 4, warm, !warm);
-  ctx.restore();                         // 复位 filter 与 globalAlpha
-  // 单色调 tint 使海报融入舞台
+  ctx.filter='none'; ctx.globalAlpha=1;
+  // —— 额外精细明暗/描边层（叠在海报之上提升张力，不触碰公共函数）——
+  const fh=ctx.createRadialGradient(-2,-58,2,-2,-58,26);
+  fh.addColorStop(0, warm?'rgba(255,238,200,0.22)':'rgba(200,214,255,0.18)'); fh.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=fh; ctx.beginPath(); ctx.ellipse(-2,-52,20,26,0,0,6.283); ctx.fill();       // 仰头受光面
+  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.moveTo(2,-70); ctx.lineTo(16,-64); ctx.lineTo(12,-30); ctx.lineTo(2,-30); ctx.closePath(); ctx.fill(); // 背光侧加深
+  ctx.strokeStyle=warm?'rgba(214,174,69,0.34)':'rgba(120,104,150,0.3)'; ctx.lineWidth=1.1;
+  ctx.beginPath(); ctx.moveTo(-25,-20); ctx.lineTo(-44,48); ctx.moveTo(25,-20); ctx.lineTo(44,48); ctx.stroke(); // 肩胸轮廓光
+  ctx.restore();
+  // 单色调 tint 使海报融入舞台（配合更高 alpha 略降）
   ctx.globalAlpha=1;
-  ctx.fillStyle = warm?'rgba(30,24,12,0.30)':'rgba(13,15,26,0.32)';
+  ctx.fillStyle = warm?'rgba(30,24,12,0.26)':'rgba(13,15,26,0.28)';
   ctx.fillRect(0,0,W,H);
   // 强四周暗角
   const vig=ctx.createRadialGradient(W*0.5,H*0.5,W*0.17,W*0.5,H*0.5,W*0.82);
@@ -4683,56 +5396,79 @@ function _monoInitSmoke(){
 // 层2 NT Live 舞台场景：透视木地板 + 玩具锡兵 + 侧幕帷幕 + 倒椅 + 地面烟雾
 function _monoStage(m){
   ctx.save();
-  const floorY=H*0.74;
-  // —— 透视木地板 ——
+  const floorY=H*0.72;
+  // —— 透视木地板（更强对比 + 板缝加深 + 板缘高光 + 板间投影）——
   const fg=ctx.createLinearGradient(0,floorY,0,H);
-  fg.addColorStop(0,'#241a12'); fg.addColorStop(0.5,'#1a120c'); fg.addColorStop(1,'#0b0705');
+  fg.addColorStop(0,'#3a2818'); fg.addColorStop(0.4,'#241811'); fg.addColorStop(1,'#080503');
   ctx.fillStyle=fg; ctx.fillRect(0,floorY,W,H-floorY);
-  // 纵向木板缝（向舞台深处收敛）
   const vpx=W*0.5;
-  ctx.strokeStyle='rgba(64,46,30,0.45)'; ctx.lineWidth=1;
-  for(let i=-9;i<=9;i++){ const bx=W*0.5+i*66; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(vpx+(bx-vpx)*0.16, floorY); ctx.stroke(); }
-  // 横向板缝（近处间距大、远处密，透视）
-  ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=1.4;
-  for(let i=1;i<=8;i++){ const t=i/8; const y=floorY+(H-floorY)*t*t; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-  // 木纹明暗
-  ctx.strokeStyle='rgba(120,92,58,0.10)'; ctx.lineWidth=1;
-  for(let i=0;i<18;i++){ const gy=floorY+_srand(i*2+11)*(H-floorY); const gx=_srand(i*2+12)*W; ctx.beginPath(); ctx.moveTo(gx-24,gy); ctx.quadraticCurveTo(gx,gy+2,gx+24,gy); ctx.stroke(); }
-  // —— 地面烟雾（frame 驱动、低 alpha 缓慢横移）——
+  // 纵向木板（深缝 + 板缘高光，向舞台深处收敛）
+  for(let i=-8;i<=8;i++){ const bx=W*0.5+i*70, tx=vpx+(bx-vpx)*0.14;
+    ctx.strokeStyle='rgba(0,0,0,0.7)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(tx,floorY); ctx.stroke();
+    ctx.strokeStyle='rgba(120,88,52,0.18)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(bx+3,H); ctx.lineTo(tx+2,floorY); ctx.stroke();
+  }
+  // 横向板缝（近疏远密，透视）+ 缝下高光
+  for(let i=1;i<=9;i++){ const t=i/9, y=floorY+(H-floorY)*t*t;
+    ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1.8; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    ctx.strokeStyle='rgba(130,96,58,0.14)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,y+2); ctx.lineTo(W,y+2); ctx.stroke();
+  }
+  // 木纹深浅条纹
+  ctx.strokeStyle='rgba(90,64,38,0.22)'; ctx.lineWidth=1;
+  for(let i=0;i<26;i++){ const gy=floorY+_srand(i*2+11)*(H-floorY); const gx=_srand(i*2+12)*W; ctx.beginPath(); ctx.moveTo(gx-30,gy); ctx.quadraticCurveTo(gx,gy+2.5,gx+30,gy); ctx.stroke(); }
+  // —— 地面体积雾（每团由 3 个错位叠加的 radial-gradient 组成，缓慢横移飘动）——
   if(m.smoke) for(const s of m.smoke){
     const rr=s.r*(0.82+0.18*Math.sin(frame*0.011+s.seed));
-    const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,rr);
-    g.addColorStop(0,'rgba(150,152,162,0.06)'); g.addColorStop(0.6,'rgba(140,142,152,0.03)'); g.addColorStop(1,'rgba(140,142,152,0)');
-    ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(s.x,s.y,rr,rr*0.5,0,0,6.283); ctx.fill();
+    for(let b=0;b<3;b++){
+      const ox=Math.sin(s.seed*1.7+b*2.1+frame*0.006)*rr*0.4, oy=Math.cos(s.seed+b*1.3)*rr*0.16*(b+1);
+      const br=rr*(0.62+0.24*b), a=0.075/(b+1);
+      const g=ctx.createRadialGradient(s.x+ox,s.y+oy,0,s.x+ox,s.y+oy,br);
+      g.addColorStop(0,'rgba(158,160,170,'+a+')'); g.addColorStop(0.55,'rgba(144,146,156,'+(a*0.5)+')'); g.addColorStop(1,'rgba(140,142,152,0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(s.x+ox,s.y+oy,br,br*0.5,0,0,6.283); ctx.fill();
+    }
   }
-  // —— 散落玩具士兵（10~16 个，基于索引确定性分布，避开哈姆雷特脚下）——
-  const N=14;
+  // —— 散落玩具锡兵（11 个，放大 + 细节化，确定性分布，近大远小，避开脚下正中）——
+  const N=11;
   for(let i=0;i<N;i++){
     const rx=_srand(i*3+21), ry=_srand(i*3+22), rk=_srand(i*3+23);
-    let sxp=W*0.06+rx*W*0.88;
-    const syp=floorY+16+ry*(H-floorY-24);
-    if(Math.abs(sxp-m.px)<64){ sxp += (sxp<m.px?-1:1)*(64+rk*24); }
-    const scl=0.7+((syp-floorY)/(H-floorY))*0.7;          // 近大远小
-    _monoSoldier(sxp, syp, (9+rk*6)*scl, rk>0.62, i);
+    let sxp=W*0.08+rx*W*0.84;
+    const syp=floorY+18+ry*(H-floorY-30);
+    if(Math.abs(sxp-m.px)<70){ sxp += (sxp<m.px?-1:1)*(70+rk*26); }
+    const depth=(syp-floorY)/(H-floorY);
+    const scl=0.72+depth*0.9;                            // 近大远小
+    _monoSoldier(sxp, syp, (15+rk*8)*scl, rk>0.6, i);
   }
-  // —— 散乱道具：1~2 把倒下/歪斜的木椅 ——
-  _monoChair(W*0.19, floorY+ (H-floorY)*0.62, 1.35, 0.9);
-  _monoChair(W*0.83, floorY+ (H-floorY)*0.42, -0.32, 0.78);
-  // —— 侧幕/舞台帷幕（左右深色垂坠，带褶皱）——
+  // —— 散乱道具：倒下/歪斜的木椅 ——
+  _monoChair(W*0.17, floorY+(H-floorY)*0.6, 1.35, 1.0);
+  _monoChair(W*0.85, floorY+(H-floorY)*0.4, -0.32, 0.82);
+  // —— 侧幕/舞台帷幕（左右厚重垂坠，带竖向褶皱 + 顶部帷幔）——
   _monoDrape(-1); _monoDrape(1);
   ctx.restore();
 }
-// 单个玩具锡兵剪影（8~16px 高，站立或倒下）
+// 单个玩具锡兵（放大细节化：头盔 + 持枪 + 底座圆盘，绿/锡灰配色 + 高光投影）
 function _monoSoldier(x,y,h,fallen,i){
   ctx.save(); ctx.translate(x,y);
-  ctx.fillStyle='rgba(0,0,0,0.42)'; ctx.beginPath(); ctx.ellipse(0,1,h*0.55,h*0.16,0,0,6.283); ctx.fill();
-  if(fallen) ctx.rotate(1.35+_srand(i+7)*0.3);
-  const col='#3c4a34', tin='#727d66';
-  ctx.fillStyle=tin; ctx.fillRect(-h*0.30,-h*0.14,h*0.60,h*0.14);   // 底座
-  ctx.fillStyle=col; ctx.fillRect(-h*0.17,-h*0.92,h*0.34,h*0.80);   // 身体
-  ctx.beginPath(); ctx.arc(0,-h*0.98,h*0.20,0,6.283); ctx.fill();    // 头（帽）
-  ctx.strokeStyle=tin; ctx.lineWidth=Math.max(0.8,h*0.06);           // 步枪
-  ctx.beginPath(); ctx.moveTo(h*0.17,-h*0.86); ctx.lineTo(h*0.17,-h*1.28); ctx.stroke();
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0,2,h*0.5,h*0.14,0,0,6.283); ctx.fill();
+  if(fallen) ctx.rotate(1.4+_srand(i+7)*0.3);
+  const green='#3f5238', greenHi='#6f855c', tin='#9aa48c', dk='#1e261a';
+  // 底座圆盘（上亮下暗）
+  ctx.fillStyle=tin; ctx.beginPath(); ctx.ellipse(0,-h*0.02,h*0.32,h*0.1,0,0,6.283); ctx.fill();
+  ctx.fillStyle=dk; ctx.beginPath(); ctx.ellipse(0,-h*0.02,h*0.32,h*0.1,0,0,Math.PI); ctx.fill();
+  // 腿
+  ctx.strokeStyle=green; ctx.lineWidth=h*0.12; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-h*0.09,-h*0.08); ctx.lineTo(-h*0.11,-h*0.42); ctx.moveTo(h*0.09,-h*0.08); ctx.lineTo(h*0.11,-h*0.42); ctx.stroke();
+  // 躯干（军绿制服 + 受光高光）
+  ctx.fillStyle=green; ctx.beginPath();
+  ctx.moveTo(-h*0.15,-h*0.4); ctx.lineTo(h*0.15,-h*0.4); ctx.lineTo(h*0.17,-h*0.78); ctx.lineTo(-h*0.17,-h*0.78); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=greenHi; ctx.fillRect(-h*0.15,-h*0.76,h*0.08,h*0.36);
+  // 手臂 + 斜持步枪（带刺刀）
+  ctx.strokeStyle=green; ctx.lineWidth=h*0.09; ctx.beginPath(); ctx.moveTo(-h*0.12,-h*0.66); ctx.lineTo(h*0.2,-h*0.6); ctx.stroke();
+  ctx.strokeStyle=dk; ctx.lineWidth=h*0.07; ctx.beginPath(); ctx.moveTo(h*0.02,-h*0.5); ctx.lineTo(h*0.34,-h*1.02); ctx.stroke();
+  ctx.strokeStyle=tin; ctx.lineWidth=h*0.04; ctx.beginPath(); ctx.moveTo(h*0.3,-h*0.96); ctx.lineTo(h*0.4,-h*1.12); ctx.stroke();
+  // 头 + 头盔（盔顶 + 盔檐 + 盔高光）
+  ctx.fillStyle='#caa77e'; ctx.beginPath(); ctx.arc(0,-h*0.86,h*0.13,0,6.283); ctx.fill();
+  ctx.fillStyle=green; ctx.beginPath(); ctx.arc(0,-h*0.9,h*0.17,Math.PI,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=dk; ctx.fillRect(-h*0.19,-h*0.9,h*0.38,h*0.05);
+  ctx.fillStyle=greenHi; ctx.beginPath(); ctx.arc(-h*0.05,-h*0.93,h*0.06,Math.PI,0); ctx.fill();
   ctx.restore();
 }
 // 倒下/歪斜的木椅剪影
@@ -4748,21 +5484,33 @@ function _monoChair(x,y,rot,scl){
   ctx.beginPath(); ctx.moveTo(-20,-2); ctx.lineTo(20,-2); ctx.stroke();
   ctx.restore();
 }
-// 侧幕帷幕（side=-1 左 / 1 右）：深色垂坠 + 褶皱明暗
+// 侧幕帷幕（side=-1 左 / 1 右）：厚重垂坠 + 明暗交替竖向褶皱 + 顶部帷幔/流苏
 function _monoDrape(side){
   ctx.save();
-  const dw=112, x0= side<0?0:W-dw;
+  const dw=132, x0= side<0?0:W-dw;
+  // 主体深色垂坠（向舞台内侧渐隐，颜色更浓）
   const g=ctx.createLinearGradient(x0,0,x0+dw,0);
-  if(side<0){ g.addColorStop(0,'#0e0906'); g.addColorStop(0.7,'rgba(16,11,7,0.55)'); g.addColorStop(1,'rgba(16,11,7,0)'); }
-  else { g.addColorStop(0,'rgba(16,11,7,0)'); g.addColorStop(0.3,'rgba(16,11,7,0.55)'); g.addColorStop(1,'#0e0906'); }
+  if(side<0){ g.addColorStop(0,'#0a0604'); g.addColorStop(0.55,'rgba(14,9,6,0.8)'); g.addColorStop(1,'rgba(14,9,6,0)'); }
+  else { g.addColorStop(0,'rgba(14,9,6,0)'); g.addColorStop(0.45,'rgba(14,9,6,0.8)'); g.addColorStop(1,'#0a0604'); }
   ctx.fillStyle=g; ctx.fillRect(x0,0,dw,H);
-  for(let i=0;i<5;i++){
-    const fx=x0+ (side<0? 10+i*22 : dw-10-i*22);
-    ctx.strokeStyle='rgba(0,0,0,0.42)'; ctx.lineWidth=7;
-    ctx.beginPath(); ctx.moveTo(fx,0); ctx.quadraticCurveTo(fx+side*6,H*0.5,fx,H); ctx.stroke();
-    ctx.strokeStyle='rgba(96,74,52,0.10)'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(fx+side*5,0); ctx.quadraticCurveTo(fx+side*11,H*0.5,fx+side*5,H); ctx.stroke();
+  // 竖向褶皱：多条明暗交替的竖向渐变褶 + 褶脊高光
+  for(let i=0;i<6;i++){
+    const fx=x0+ (side<0? 8+i*20 : dw-8-i*20);
+    const fold=ctx.createLinearGradient(fx-9,0,fx+9,0);
+    fold.addColorStop(0,'rgba(0,0,0,0.5)'); fold.addColorStop(0.5,'rgba(96,60,36,0.16)'); fold.addColorStop(1,'rgba(0,0,0,0.5)');
+    ctx.fillStyle=fold; ctx.beginPath();
+    ctx.moveTo(fx-9,0); ctx.quadraticCurveTo(fx-9+side*5,H*0.5,fx-9,H);
+    ctx.lineTo(fx+9,H); ctx.quadraticCurveTo(fx+9+side*5,H*0.5,fx+9,0); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='rgba(120,80,48,0.22)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(fx,0); ctx.quadraticCurveTo(fx+side*5,H*0.5,fx,H); ctx.stroke();
   }
+  // 顶部帷幔（横向垂坠弧瓣 + 流苏）
+  const vh=64;
+  const vg=ctx.createLinearGradient(0,0,0,vh); vg.addColorStop(0,'#1a0f08'); vg.addColorStop(1,'rgba(10,6,4,0.2)');
+  ctx.fillStyle=vg; ctx.fillRect(x0,0,dw,vh*0.5);
+  ctx.fillStyle='rgba(10,6,4,0.85)';
+  for(let i=0;i<6;i++){ const sx=x0+i*(dw/5.5); ctx.beginPath(); ctx.moveTo(sx,vh*0.5); ctx.quadraticCurveTo(sx+dw/11,vh*0.92,sx+dw/5.5,vh*0.5); ctx.closePath(); ctx.fill(); }
+  ctx.strokeStyle='rgba(150,110,50,0.4)'; ctx.lineWidth=1;
+  for(let i=0;i<=Math.floor(dw/16);i++){ const sx=x0+i*16; ctx.beginPath(); ctx.moveTo(sx,vh*0.55); ctx.lineTo(sx,vh*0.72); ctx.stroke(); }
   ctx.restore();
 }
 // 通用光锥
@@ -4861,58 +5609,164 @@ function _monoHamlet(m, px){
   // —— 后臂（偏暗，躯干之后）——
   seg(P.shoulderB, P.elbowB, 13, '#0b0b12'); seg(P.elbowB, P.handB, 11, '#0e0e16');
   ctx.fillStyle='#caa47e'; ctx.beginPath(); ctx.arc(P.handB.x,P.handB.y,6,0,6.283); ctx.fill();
-  // —— 躯干军装外套（高立领、方肩、束腰、硬朗轮廓）——
-  const coat=ctx.createLinearGradient(0,P.shC.y,0,0);
-  coat.addColorStop(0,'#26262e'); coat.addColorStop(0.5,'#12121a'); coat.addColorStop(1,'#08080d');
+  // ===== 躯干黑色军装外套（卷福版：方肩/收腰/展摆 · 高立领 · 肩章 · 排扣 · 斜绶带 · 顶光衣褶）=====
+  const Hc=P.headC;                                   // 头心（后续脸/领/记录头顶均用）
+  const goldHi = warm?'#f5dd90':'#a08cbc';            // 金属受光高光
+  const goldDk = warm?'#7f6220':'#382a4e';            // 金属暗部
+  const hemY=66;
+  // 肩章绘制（金呢底 + 绲边高光 + 流苏 + 肩扣）
+  const drawEp=(sx,sy,dir)=>{ ctx.save();
+    ctx.fillStyle=goldDk; ctx.beginPath(); ctx.moveTo(sx-3*dir,sy-4.5); ctx.lineTo(sx+16*dir,sy-4); ctx.lineTo(sx+18*dir,sy+1); ctx.lineTo(sx+16*dir,sy+4); ctx.lineTo(sx-3*dir,sy+4.5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=gold; ctx.beginPath(); ctx.moveTo(sx-2*dir,sy-3.2); ctx.lineTo(sx+14*dir,sy-3); ctx.lineTo(sx+16*dir,sy+0.6); ctx.lineTo(sx+14*dir,sy+3); ctx.lineTo(sx-2*dir,sy+3.2); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=goldHi; ctx.lineWidth=0.9; ctx.beginPath(); ctx.moveTo(sx-2*dir,sy-3.2); ctx.lineTo(sx+14*dir,sy-3); ctx.stroke();
+    ctx.fillStyle=goldHi; ctx.beginPath(); ctx.arc(sx+3*dir,sy-0.4,1.1,0,6.283); ctx.fill();
+    ctx.strokeStyle=gold; ctx.lineWidth=0.8; for(let k=0;k<4;k++){ const fx=sx+(15+k*1.5)*dir; ctx.beginPath(); ctx.moveTo(fx,sy+2); ctx.lineTo(fx+1.5*dir,sy+8); ctx.stroke(); }
+    ctx.restore(); };
+  // 外套主体（硬朗剪影，顶光渐变：肩胸偏亮、下摆渐暗）
+  const coat=ctx.createLinearGradient(0,P.shC.y,0,hemY);
+  coat.addColorStop(0,'#2c2c35'); coat.addColorStop(0.34,'#181820'); coat.addColorStop(0.7,'#0e0e15'); coat.addColorStop(1,'#050508');
   ctx.fillStyle=coat;
   ctx.beginPath();
-  ctx.moveTo(P.shoulderB.x-6, P.shoulderB.y-2);
-  ctx.lineTo(P.shoulderF.x+6, P.shoulderF.y-2);
-  ctx.lineTo(P.hipR.x+13, 6);
-  ctx.lineTo(P.hipR.x+9, 64);            // 外套下摆
-  ctx.lineTo(P.hipL.x-9, 64);
-  ctx.lineTo(P.hipL.x-13, 6);
+  ctx.moveTo(P.shoulderB.x-7, P.shoulderB.y-1);
+  ctx.lineTo(P.shoulderF.x+7, P.shoulderF.y-1);
+  ctx.lineTo(P.hipR.x+14, 4);
+  ctx.lineTo(P.hipR.x+11, hemY);          // 外套下摆
+  ctx.lineTo(P.hipL.x-11, hemY);
+  ctx.lineTo(P.hipL.x-14, 4);
   ctx.closePath(); ctx.fill();
-  // 束腰
-  ctx.fillStyle='#050507'; ctx.fillRect(P.hipL.x-12,-6,(P.hipR.x-P.hipL.x)+24,10);
-  ctx.fillStyle=gold; ctx.fillRect(P.hipL.x-12,-2,(P.hipR.x-P.hipL.x)+24,3);
-  // 中缝高光 + 排扣
-  ctx.strokeStyle='rgba(255,255,255,0.10)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(P.neck.x, P.neck.y+6); ctx.lineTo(0,-4); ctx.stroke();
-  ctx.fillStyle=gold; for(let i=0;i<6;i++){ const t=i/6, bx=P.neck.x*(1-t), by=(P.neck.y+8)*(1-t)-4*t; ctx.beginPath(); ctx.arc(bx+3,by,1.9,0,6.283); ctx.fill(); }
-  // 肩章
-  ctx.fillStyle=gold; ctx.fillRect(P.shoulderF.x-6,P.shoulderF.y-3,18,6); ctx.fillRect(P.shoulderB.x-12,P.shoulderB.y-3,18,6);
-  // 顶光高光（上半身偏亮）
-  ctx.fillStyle=warm?'rgba(255,232,175,0.16)':'rgba(210,220,255,0.13)';
-  ctx.beginPath(); ctx.moveTo(P.shoulderB.x, P.shoulderB.y); ctx.lineTo(P.shoulderF.x, P.shoulderF.y); ctx.lineTo(4,-10); ctx.lineTo(-8,-10); ctx.closePath(); ctx.fill();
-  // —— 前腿 ——
-  seg(P.hipR, P.kneeF, 21, '#131319'); seg(P.kneeF, P.footF, 17, '#0a0a10');
-  ctx.fillStyle='#030304'; ctx.beginPath(); ctx.ellipse(P.footF.x+7, P.footF.y-3, 17, 8, 0, 0, 6.283); ctx.fill();
-  // —— 高立领 + 颈 ——
-  ctx.fillStyle='#b88d6d'; ctx.beginPath(); ctx.moveTo(P.neck.x-6,P.neck.y+2); ctx.lineTo(P.headC.x-4,P.headC.y+10); ctx.lineTo(P.headC.x+4,P.headC.y+10); ctx.lineTo(P.neck.x+6,P.neck.y+2); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#0a0a11'; ctx.beginPath(); ctx.moveTo(P.neck.x-13,P.neck.y+6); ctx.lineTo(P.headC.x-7,P.headC.y+13); ctx.lineTo(P.headC.x+7,P.headC.y+13); ctx.lineTo(P.neck.x+13,P.neck.y+6); ctx.lineTo(P.neck.x+9,P.neck.y-6); ctx.lineTo(P.neck.x-9,P.neck.y-6); ctx.closePath(); ctx.fill();
-  // —— 头（瘦长棱角脸、高颧骨、薄唇）——
-  const Hc=P.headC;
-  const skin=ctx.createLinearGradient(0,Hc.y-24,0,Hc.y+22); skin.addColorStop(0,'#dbb891'); skin.addColorStop(1,'#9c6f55');
+  // 胸口受光软高光块
+  const chestHi=ctx.createLinearGradient(0,P.shC.y+4,0,24);
+  chestHi.addColorStop(0, warm?'rgba(255,232,180,0.22)':'rgba(206,216,255,0.17)'); chestHi.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=chestHi; ctx.beginPath(); ctx.moveTo(-3,P.shC.y+6); ctx.lineTo(P.shoulderF.x+2,P.shoulderF.y+4); ctx.lineTo(9,20); ctx.lineTo(-9,20); ctx.closePath(); ctx.fill();
+  // 衣褶明暗（下摆放射暗褶 + 少量高光褶）
+  ctx.lineCap='round';
+  ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=2.4;
+  for(let i=-2;i<=2;i++){ ctx.beginPath(); ctx.moveTo(i*2.4,10); ctx.quadraticCurveTo(i*5.4,38,i*11,hemY); ctx.stroke(); }
+  ctx.strokeStyle=warm?'rgba(255,230,175,0.10)':'rgba(200,212,255,0.09)'; ctx.lineWidth=1.2;
+  for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(i*4,12); ctx.quadraticCurveTo(i*10,36,i*12,hemY-6); ctx.stroke(); }
+  // 中央门襟缝 + 领口深 V
+  ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(P.neck.x+1,P.neck.y+6); ctx.lineTo(1,hemY-4); ctx.stroke();
+  ctx.strokeStyle='rgba(0,0,0,0.55)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(P.neck.x-1,P.neck.y+6); ctx.lineTo(-1,hemY-4); ctx.stroke();
+  // 斜向绶带（左肩→右腰，缎面高光）
+  ctx.save();
+  const sashG=ctx.createLinearGradient(P.shoulderB.x,P.shoulderB.y, P.hipR.x, 8);
+  sashG.addColorStop(0.05, warm?'#8a1220':'#3a2450'); sashG.addColorStop(0.55, warm?'#b8202e':'#4e3268'); sashG.addColorStop(1, warm?'#6a0e18':'#2a1a3c');
+  ctx.strokeStyle=sashG; ctx.lineWidth=8; ctx.lineCap='butt';
+  ctx.beginPath(); ctx.moveTo(P.shoulderB.x+2,P.shoulderB.y+3); ctx.lineTo(P.hipR.x+6,10); ctx.stroke();
+  ctx.strokeStyle=warm?'rgba(255,180,150,0.35)':'rgba(190,170,230,0.3)'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(P.shoulderB.x,P.shoulderB.y+1); ctx.lineTo(P.hipR.x+4,7); ctx.stroke();
+  ctx.restore();
+  // 束腰（皮革 + 金属带扣）
+  ctx.fillStyle='#050507'; ctx.fillRect(P.hipL.x-13,-7,(P.hipR.x-P.hipL.x)+26,11);
+  ctx.fillStyle=goldDk; ctx.fillRect(P.hipL.x-13,-2,(P.hipR.x-P.hipL.x)+26,3);
+  ctx.fillStyle=gold; ctx.fillRect(P.hipL.x-13,-3,(P.hipR.x-P.hipL.x)+26,1.4);
+  ctx.fillStyle=goldHi; ctx.fillRect(-4,-6,8,7); ctx.fillStyle=goldDk; ctx.fillRect(-2.5,-4.5,5,4);
+  // 一排金属纽扣（右门襟：投影 + 底金 + 亮金 + 高光点）
+  for(let i=0;i<6;i++){ const t=i/5.3, bx=P.neck.x*(1-t)+3.2, by=(P.neck.y+9)*(1-t)+(hemY-16)*t;
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.beginPath(); ctx.arc(bx+0.6,by+0.8,2.5,0,6.283); ctx.fill();
+    ctx.fillStyle=goldDk; ctx.beginPath(); ctx.arc(bx,by,2.4,0,6.283); ctx.fill();
+    ctx.fillStyle=gold; ctx.beginPath(); ctx.arc(bx,by,1.7,0,6.283); ctx.fill();
+    ctx.fillStyle=goldHi; ctx.beginPath(); ctx.arc(bx-0.6,by-0.7,0.8,0,6.283); ctx.fill(); }
+  // 肩章（左右各一，清晰细节）
+  drawEp(P.shoulderF.x, P.shoulderF.y, 1); drawEp(P.shoulderB.x, P.shoulderB.y, -1);
+  // 顶光肩背高光
+  ctx.fillStyle=warm?'rgba(255,236,185,0.14)':'rgba(210,220,255,0.12)';
+  ctx.beginPath(); ctx.moveTo(P.shoulderB.x, P.shoulderB.y); ctx.lineTo(P.shoulderF.x, P.shoulderF.y); ctx.lineTo(5,-8); ctx.lineTo(-8,-8); ctx.closePath(); ctx.fill();
+  // —— 前腿（军裤：深色 + 侧缝高光 + 皮靴反光）——
+  seg(P.hipR, P.kneeF, 22, '#15151c'); seg(P.kneeF, P.footF, 18, '#0b0b12');
+  ctx.strokeStyle=warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)'; ctx.lineWidth=1.4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(P.hipR.x+3,2); ctx.lineTo(P.kneeF.x+2,P.kneeF.y); ctx.lineTo(P.footF.x+2,P.footF.y-6); ctx.stroke();
+  ctx.fillStyle='#050506'; ctx.beginPath(); ctx.ellipse(P.footF.x+7, P.footF.y-3, 18, 8, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle='rgba(120,120,140,0.25)'; ctx.beginPath(); ctx.ellipse(P.footF.x+3, P.footF.y-5, 7, 2.4, 0, 0, 6.283); ctx.fill();
+  // —— 颈 + 高立领（立领分明 + 金边勾勒 + 颈部投影）——
+  ctx.fillStyle='#a67c5e'; ctx.beginPath(); ctx.moveTo(P.neck.x-5,P.neck.y+2); ctx.lineTo(Hc.x-4,Hc.y+11); ctx.lineTo(Hc.x+4,Hc.y+11); ctx.lineTo(P.neck.x+5,P.neck.y+2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(40,22,16,0.5)'; ctx.beginPath(); ctx.ellipse(Hc.x,Hc.y+9,4,2.4,0,0,6.283); ctx.fill();
+  ctx.fillStyle='#0c0c14'; ctx.beginPath();
+  ctx.moveTo(P.neck.x-14,P.neck.y+7); ctx.lineTo(Hc.x-8,Hc.y+13); ctx.lineTo(Hc.x+8,Hc.y+13); ctx.lineTo(P.neck.x+14,P.neck.y+7);
+  ctx.lineTo(P.neck.x+10,P.neck.y-7); ctx.lineTo(P.neck.x-10,P.neck.y-7); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=gold; ctx.lineWidth=1.1; ctx.beginPath(); ctx.moveTo(Hc.x-8,Hc.y+12.5); ctx.lineTo(P.neck.x-13,P.neck.y+6); ctx.moveTo(Hc.x+8,Hc.y+12.5); ctx.lineTo(P.neck.x+13,P.neck.y+6); ctx.stroke();
+  // ===== 头部（卷福风格：瘦长棱角脸 · 高颧骨 · 深眼窝 · 高鼻梁 · 薄唇 · 顶光塑体，忧郁凝重）=====
+  ctx.save(); ctx.translate(Hc.x, Hc.y);              // 以头心为局部原点
+  // 脸型（多段折线：额角→太阳穴→高颧骨→下颌角→尖下巴）
+  const skin=ctx.createLinearGradient(0,-26,0,22);
+  skin.addColorStop(0,'#e9cba4'); skin.addColorStop(0.44,'#d3a67e'); skin.addColorStop(0.8,'#a9764f'); skin.addColorStop(1,'#7d5238');
   ctx.fillStyle=skin;
   ctx.beginPath();
-  ctx.moveTo(Hc.x-11,Hc.y-13); ctx.lineTo(Hc.x-9,Hc.y+3); ctx.lineTo(Hc.x-4,Hc.y+19);
-  ctx.lineTo(Hc.x+4,Hc.y+19); ctx.lineTo(Hc.x+9,Hc.y+3); ctx.lineTo(Hc.x+11,Hc.y-13);
-  ctx.lineTo(Hc.x,Hc.y-22); ctx.closePath(); ctx.fill();
-  // 颧骨阴影
-  ctx.fillStyle='rgba(60,36,30,0.28)'; ctx.beginPath(); ctx.moveTo(Hc.x-10,Hc.y-2); ctx.lineTo(Hc.x-3,Hc.y+2); ctx.lineTo(Hc.x-8,Hc.y+9); ctx.closePath();
-  ctx.moveTo(Hc.x+10,Hc.y-2); ctx.lineTo(Hc.x+3,Hc.y+2); ctx.lineTo(Hc.x+8,Hc.y+9); ctx.closePath(); ctx.fill();
-  // 眉眼 + 薄唇
-  ctx.strokeStyle='rgba(40,26,22,0.8)'; ctx.lineWidth=1.3;
-  ctx.beginPath(); ctx.moveTo(Hc.x-8,Hc.y-5); ctx.lineTo(Hc.x-2,Hc.y-4); ctx.moveTo(Hc.x+2,Hc.y-4); ctx.lineTo(Hc.x+8,Hc.y-5); ctx.stroke();
-  ctx.fillStyle='#0a0a0c'; ctx.fillRect(Hc.x-7,Hc.y-3,4,1.6); ctx.fillRect(Hc.x+3,Hc.y-3,4,1.6);
-  ctx.strokeStyle='rgba(70,44,38,0.7)'; ctx.beginPath(); ctx.moveTo(Hc.x-4,Hc.y+11); ctx.lineTo(Hc.x+4,Hc.y+11); ctx.stroke();
-  // 头发（棱角）
-  ctx.fillStyle='#0d0d13'; ctx.beginPath(); ctx.moveTo(Hc.x-12,Hc.y-6); ctx.quadraticCurveTo(Hc.x,Hc.y-30,Hc.x+12,Hc.y-6); ctx.lineTo(Hc.x+8,Hc.y-12); ctx.quadraticCurveTo(Hc.x,Hc.y-19,Hc.x-8,Hc.y-12); ctx.closePath(); ctx.fill();
-  // 头顶光
-  ctx.fillStyle=warm?'rgba(255,236,190,0.35)':'rgba(214,224,255,0.28)'; ctx.beginPath(); ctx.ellipse(Hc.x,Hc.y-16,8,3,0,0,6.283); ctx.fill();
-  // —— 前臂（独白手势臂，置于最前）——
-  seg(P.shoulderF, P.elbowF, 14, '#1c1c24'); seg(P.elbowF, P.handF, 12, '#20202a');
-  ctx.fillStyle='#d3ab82'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y,7,9,0,0,6.283); ctx.fill();  // 掌
+  ctx.moveTo(0,-24); ctx.lineTo(-8,-23); ctx.lineTo(-11.5,-15);
+  ctx.lineTo(-12.5,-4); ctx.lineTo(-10,4); ctx.lineTo(-7.5,11);
+  ctx.lineTo(-4,18); ctx.lineTo(0,20.5); ctx.lineTo(4,18); ctx.lineTo(7.5,11);
+  ctx.lineTo(10,4); ctx.lineTo(12.5,-4); ctx.lineTo(11.5,-15); ctx.lineTo(8,-23);
+  ctx.closePath(); ctx.fill();
+  // 背光侧整脸暗面（右半，顶光下体积）
+  ctx.fillStyle='rgba(58,34,26,0.24)';
+  ctx.beginPath(); ctx.moveTo(2,-22); ctx.lineTo(8,-23); ctx.lineTo(11.5,-15); ctx.lineTo(12.5,-4); ctx.lineTo(10,4); ctx.lineTo(7.5,11); ctx.lineTo(4,18); ctx.lineTo(2,10); ctx.closePath(); ctx.fill();
+  // 颧骨下凹陷阴影（两侧，收出高颧骨）
+  ctx.fillStyle='rgba(72,40,30,0.30)';
+  ctx.beginPath(); ctx.moveTo(-12,-3); ctx.lineTo(-5,1); ctx.lineTo(-8,9); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(12,-3); ctx.lineTo(5,1); ctx.lineTo(8,9); ctx.closePath(); ctx.fill();
+  // 颧骨受光高光棱
+  ctx.fillStyle='rgba(255,238,205,0.22)';
+  ctx.beginPath(); ctx.ellipse(-8,-6,3.2,1.8,-0.5,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(8,-6,3.2,1.8,0.5,0,6.283); ctx.fill();
+  // 深眼窝（眉骨投影暗带 + 上眼睑投影）
+  ctx.fillStyle='rgba(30,18,16,0.42)';
+  ctx.beginPath(); ctx.moveTo(-11,-11); ctx.lineTo(-2,-9); ctx.lineTo(-3,-4); ctx.lineTo(-10,-5); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(11,-11); ctx.lineTo(2,-9); ctx.lineTo(3,-4); ctx.lineTo(10,-5); ctx.closePath(); ctx.fill();
+  // 眉（浓、微蹙、突出眉骨）
+  ctx.strokeStyle='#2a1c17'; ctx.lineWidth=1.8; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-9.5,-10.5); ctx.quadraticCurveTo(-6,-11.6,-2.2,-9.6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9.5,-10.5); ctx.quadraticCurveTo(6,-11.6,2.2,-9.6); ctx.stroke();
+  // 眼（深陷、外角下垂、眼神凝重不笑）
+  ctx.fillStyle='rgba(226,220,208,0.9)';
+  ctx.beginPath(); ctx.ellipse(-6,-6,2.6,1.5,0.06,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(6,-6,2.6,1.5,-0.06,0,6.283); ctx.fill();
+  ctx.fillStyle='#4a3524';
+  ctx.beginPath(); ctx.arc(-6.2,-6.4,1.3,0,6.283); ctx.fill(); ctx.beginPath(); ctx.arc(6.2,-6.4,1.3,0,6.283); ctx.fill();
+  ctx.fillStyle='#0a0708';
+  ctx.beginPath(); ctx.arc(-6.2,-6.4,0.6,0,6.283); ctx.fill(); ctx.beginPath(); ctx.arc(6.2,-6.4,0.6,0,6.283); ctx.fill();
+  ctx.strokeStyle='rgba(20,12,12,0.85)'; ctx.lineWidth=1.1;
+  ctx.beginPath(); ctx.moveTo(-8.6,-6.6); ctx.quadraticCurveTo(-6,-8,-3.4,-6.4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8.6,-6.6); ctx.quadraticCurveTo(6,-8,3.4,-6.4); ctx.stroke();
+  ctx.strokeStyle='rgba(60,38,30,0.4)'; ctx.lineWidth=0.8;
+  ctx.beginPath(); ctx.moveTo(-8.2,-4.4); ctx.lineTo(-3.8,-4.6); ctx.moveTo(8.2,-4.4); ctx.lineTo(3.8,-4.6); ctx.stroke();
+  // 高鼻梁（受光鼻梁高光 + 单侧鼻影 + 鼻头/鼻孔）
+  ctx.strokeStyle='rgba(255,240,210,0.5)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-1.4,-9); ctx.lineTo(-1.8,2); ctx.stroke();
+  ctx.fillStyle='rgba(70,40,30,0.34)'; ctx.beginPath(); ctx.moveTo(0.4,-8); ctx.lineTo(2.6,2); ctx.lineTo(0.2,3); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(50,30,24,0.5)'; ctx.beginPath(); ctx.ellipse(-2.4,3.4,1.1,0.8,0,0,6.283); ctx.fill(); ctx.beginPath(); ctx.ellipse(1.4,3.4,1.1,0.8,0,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(255,235,205,0.28)'; ctx.beginPath(); ctx.ellipse(-1.4,2.6,1.6,1.2,0,0,6.283); ctx.fill();
+  // 人中 + 薄唇（上下唇分明、微抿平压）
+  ctx.strokeStyle='rgba(70,44,34,0.4)'; ctx.lineWidth=0.7; ctx.beginPath(); ctx.moveTo(-0.4,5); ctx.lineTo(-0.4,7.6); ctx.stroke();
+  ctx.strokeStyle='rgba(40,22,20,0.85)'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(-4.4,8.4); ctx.quadraticCurveTo(-1,9,-0.4,8.7); ctx.quadraticCurveTo(1,9,4.4,8.4); ctx.stroke();
+  ctx.strokeStyle='rgba(120,70,60,0.5)'; ctx.lineWidth=0.9; ctx.beginPath(); ctx.moveTo(-4,7.9); ctx.quadraticCurveTo(0,7.4,4,7.9); ctx.stroke();
+  ctx.fillStyle='rgba(150,92,78,0.4)'; ctx.beginPath(); ctx.ellipse(0,9.8,3.2,1.1,0,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(60,34,26,0.3)'; ctx.beginPath(); ctx.ellipse(0,12,2.6,1.4,0,0,6.283); ctx.fill();
+  // ===== 发型（偏分立体短发：底层暗块 + 中层体积 + 数条发丝高光 + 顶部受光）=====
+  ctx.fillStyle='#0c0b10';
+  ctx.beginPath();
+  ctx.moveTo(-12.5,-4); ctx.lineTo(-13,-16); ctx.quadraticCurveTo(-9,-27,0,-27.5);
+  ctx.quadraticCurveTo(10,-27,13,-15); ctx.lineTo(12.5,-4);
+  ctx.lineTo(9,-9); ctx.quadraticCurveTo(8,-20,-1,-19.5);
+  ctx.quadraticCurveTo(-8,-19,-9.5,-11); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#191521';
+  ctx.beginPath(); ctx.moveTo(-11,-16); ctx.quadraticCurveTo(-6,-25,3,-24);
+  ctx.quadraticCurveTo(-2,-19,-3,-15); ctx.quadraticCurveTo(-8,-18,-11,-13); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(150,140,160,0.32)'; ctx.lineWidth=0.8; ctx.lineCap='round';
+  for(let i=0;i<6;i++){ const sx=-9+i*3.4; ctx.beginPath(); ctx.moveTo(sx,-22+i*0.6); ctx.quadraticCurveTo(sx+4,-15,sx+2+i*0.5,-8+i*0.4); ctx.stroke(); }
+  ctx.strokeStyle='rgba(90,80,100,0.5)'; ctx.lineWidth=0.7;
+  for(let i=0;i<4;i++){ const sx=-6+i*4; ctx.beginPath(); ctx.moveTo(sx,-24); ctx.quadraticCurveTo(sx+3,-17,sx+1,-11); ctx.stroke(); }
+  ctx.fillStyle=warm?'rgba(255,236,190,0.28)':'rgba(210,222,255,0.22)';
+  ctx.beginPath(); ctx.ellipse(-2,-22,6,2.4,-0.25,0,6.283); ctx.fill();
+  ctx.restore();                                     // 头部局部坐标复位
+  // —— 前臂（独白手势臂，最前层：军装袖 + 金袖口 + 修长手掌）——
+  seg(P.shoulderF, P.elbowF, 15, '#1e1e27'); seg(P.elbowF, P.handF, 12.5, '#22222d');
+  ctx.strokeStyle=warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)'; ctx.lineWidth=1.4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(P.shoulderF.x,P.shoulderF.y+2); ctx.lineTo(P.elbowF.x,P.elbowF.y); ctx.stroke();
+  ctx.save(); ctx.translate(P.handF.x,P.handF.y); ctx.rotate(Math.atan2(P.handF.y-P.elbowF.y,P.handF.x-P.elbowF.x));
+  ctx.fillStyle=goldDk; ctx.fillRect(-7,-6,4,12); ctx.fillStyle=gold; ctx.fillRect(-7,-6,1.6,12); ctx.restore();
+  ctx.fillStyle='#d8b083'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y,6.5,9,0,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(70,44,32,0.3)'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y+3,5,3,0,0,6.283); ctx.fill();
   ctx.restore();
   // 记录头顶屏幕坐标供对白框定位
   m.headX=px; m.headTopY=footY-maxFootY+breath+(Hc.y-24);
@@ -5059,19 +5913,28 @@ function drawFinalBattleFx(){
     } else finalBossEntryFrame=-1;
   }
   const doom = !opheliaSaved;
+  const ratio=clamp(boss.hp/boss.maxHp,0,1);
+  const intensity=clamp((boss.phase-1)/((boss.phases-1)||1),0,1);   // 战斗激烈程度 0..1
   // ---- 顶部风暴乌云 + 全屏暗角，压迫氛围 ----
   const cloud=ctx.createLinearGradient(0,0,0,H*0.4);
   cloud.addColorStop(0, doom?'rgba(24,16,40,0.55)':'rgba(14,20,40,0.5)'); cloud.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=cloud; ctx.fillRect(0,0,W,H*0.4);
   for(let c=0;c<5;c++){ const cx=((now*0.6+c*230)%(W+300))-150, cy=H*0.06+c*14; const cg=ctx.createRadialGradient(cx,cy,6,cx,cy,120); cg.addColorStop(0, doom?'rgba(40,26,60,0.5)':'rgba(30,40,66,0.45)'); cg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=cg; ctx.beginPath(); ctx.ellipse(cx,cy,120,44,0,0,6.283); ctx.fill(); }
-  const vig=ctx.createRadialGradient(W/2,H*0.5,H*0.35,W/2,H*0.5,H*0.95); vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1, doom?'rgba(8,4,16,0.6)':'rgba(4,6,16,0.55)'); ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
-  // ---- 狂风骤雨：远/近两层斜雨 + 阵风倾角 + 地面雨溅 ----
+  // ---- 背景远处连续背景闪（低亮度、云层内辉映） ----
+  const bgL=Math.max(0, Math.sin(now*0.07)*Math.sin(now*0.017));
+  if(bgL>0.25){ const bg=ctx.createLinearGradient(0,0,0,H*0.5); bg.addColorStop(0,(doom?'rgba(150,120,200,':'rgba(150,190,235,')+(0.10*bgL).toFixed(3)+')'); bg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H*0.5); }
+  // ---- 动态全屏暗角：压迫感随战斗激烈程度（阶段/剩余血量）加深 ----
+  const vigA=(doom?0.6:0.55)+intensity*0.22+(1-ratio)*0.10;
+  const vig=ctx.createRadialGradient(W/2,H*0.5,H*0.35,W/2,H*0.5,H*0.95); vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1, (doom?'rgba(8,4,16,':'rgba(4,6,16,')+clamp(vigA,0,0.9).toFixed(3)+')'); ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+  // ---- 暴雨三层：远景蒙雨（细、慢）/ 中景斜雨（中、倾斜）/ 近景暴雨（粗长、快）+ 地面溅水 ----
   const gust=1+0.55*Math.sin(now*0.018)+0.2*Math.sin(now*0.05);
-  ctx.strokeStyle=(doom?'rgba(170,155,215,':'rgba(150,195,245,')+'0.22)'; ctx.lineWidth=1;
+  ctx.strokeStyle=(doom?'rgba(170,155,215,':'rgba(150,195,245,')+'0.22)'; ctx.lineWidth=1;                       // 远景蒙雨
   for(let i=0;i<70;i++){ const seed=i*61, spd=5+(i%3)*2; const x=((seed*17)%W+now*spd*0.35)%W; const y=((seed*23)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+3*gust,y+9); ctx.stroke(); }
-  ctx.strokeStyle=(doom?'rgba(200,185,240,':'rgba(190,220,255,')+'0.42)'; ctx.lineWidth=1.6;
+  ctx.strokeStyle=(doom?'rgba(200,185,240,':'rgba(190,220,255,')+'0.42)'; ctx.lineWidth=1.6;                     // 中景斜雨
   for(let i=0;i<64;i++){ const seed=i*97, spd=13+(i%4)*4; const x=((seed*13)%W+now*spd*0.5)%W; const y=((seed*29)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+6*gust,y+20); ctx.stroke(); }
-  ctx.strokeStyle=(doom?'rgba(200,185,240,':'rgba(200,225,255,')+'0.5)'; ctx.lineWidth=1;
+  ctx.strokeStyle=(doom?'rgba(215,205,245,':'rgba(210,235,255,')+'0.55)'; ctx.lineWidth=2.2;                     // 近景暴雨（粗长快）
+  for(let i=0;i<48;i++){ const seed=i*131, spd=22+(i%4)*5; const x=((seed*13)%W+now*spd*0.6)%W; const y=((seed*37)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+9*gust,y+32); ctx.stroke(); }
+  ctx.strokeStyle=(doom?'rgba(200,185,240,':'rgba(200,225,255,')+'0.5)'; ctx.lineWidth=1;                        // 地面溅水弧线
   for(let i=0;i<14;i++){ const x=((i*137+((now*7)%400))*7)%W; const ph=(now*0.2+i)%6.283; const r=1.5+Math.abs(Math.sin(ph))*3; ctx.beginPath(); ctx.arc(x,H*0.9+Math.sin(i)*6,r,Math.PI,0); ctx.stroke(); }
   // 横掠阵风纹（全屏斜向流动）
   ctx.strokeStyle=(doom?'rgba(190,175,225,':'rgba(200,210,235,')+'0.08)'; ctx.lineWidth=2;
@@ -5119,6 +5982,30 @@ function drawFinalBattleFx(){
     sheet.addColorStop(0, doom?'rgba(210,195,255,'+(0.42*rem).toFixed(3)+')':'rgba(225,240,255,'+(0.42*rem).toFixed(3)+')');
     sheet.addColorStop(1,'rgba(255,255,255,'+(0.14*rem).toFixed(3)+')');
     ctx.fillStyle=sheet; ctx.fillRect(0,0,W,H);
+  } else if(finalLightning.segs && finalLightning.segs.length && now<finalLightning.boltUntil+10){
+    // ---- 闪后短暂残留电弧（淡出的细线余辉） ----
+    const ea=clamp((finalLightning.boltUntil+10-now)/10,0,1)*0.4;
+    ctx.save(); ctx.globalAlpha=ea; ctx.strokeStyle=doom?'rgba(200,180,255,0.9)':'rgba(190,225,255,0.9)'; ctx.lineWidth=1;
+    const s=finalLightning.segs; ctx.beginPath(); ctx.moveTo(s[0][0],s[0][1]); for(let i=1;i<s.length;i++) ctx.lineTo(s[i][0],s[i][1]); ctx.stroke(); ctx.restore();
+  }
+  // ---- Boss 血量<30%：地面裂缝发光（确定性走向，脉动辉光） ----
+  if(ratio<0.3){
+    const k=clamp((0.3-ratio)/0.3,0,1), pulse=0.5+0.5*Math.sin(now*0.12);
+    ctx.save(); ctx.lineCap='round'; ctx.shadowColor='rgba(255,80,20,0.9)'; ctx.shadowBlur=12*k;
+    ctx.strokeStyle='rgba(255,'+((70+50*pulse)|0)+',30,'+(0.3+0.45*k*pulse).toFixed(3)+')'; ctx.lineWidth=1.5+k*2.5;
+    for(let i=0;i<6;i++){ const cx=W*(0.08+i*0.17); ctx.beginPath(); ctx.moveTo(cx,H);
+      for(let j=1;j<=4;j++){ const x=cx+(hnoise(i*7+j)-0.5)*54, y=H-j*20; ctx.lineTo(x,y); } ctx.stroke(); }
+    ctx.restore();
+  }
+  // ---- 阶段切换全屏圆形冲击波（从中心向外扩散，白色→透明） ----
+  for(const sw of shockwaves){
+    const p=sw.t/sw.max, r=p*W*0.92, a=(1-p)*0.6;
+    ctx.save(); ctx.lineCap='round';
+    ctx.strokeStyle='rgba(255,255,255,'+a.toFixed(3)+')'; ctx.lineWidth=6*(1-p)+1;
+    ctx.beginPath(); ctx.arc(W/2,H/2,r,0,6.283); ctx.stroke();
+    ctx.strokeStyle='rgba(255,220,180,'+(a*0.55).toFixed(3)+')'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(W/2,H/2,r*0.72,0,6.283); ctx.stroke();
+    ctx.restore();
   }
   ctx.restore();
 }
