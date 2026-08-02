@@ -464,12 +464,6 @@ const dom = {
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
 function applyRuntimeUiFixes(){
-  const storyWrap = dom.storyBody && dom.storyBody.closest ? dom.storyBody.closest('.storyWrap') : null;
-  if(storyWrap){
-    storyWrap.style.width = '62%';
-    storyWrap.style.maxWidth = '620px';
-    storyWrap.style.marginRight = '34%';
-  }
   updateDialogueBarOffset();
 }
 function updateDialogueBarOffset(){
