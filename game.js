@@ -445,6 +445,7 @@ const Sound = {
     this.seq=M.seq; this.bass=M.bass; this.perc=M.perc; this.tempo=M.tempo;
     this.wave=M.wave; this.bassWave=M.bassWave||'triangle';
     this.water=!!M.water; this.bell=!!M.bell; this.organ=!!M.organ; this.choir=!!M.choir; this.brass=!!M.brass;
+    this.harm=M.harm||null; this.harmWave=M.harmWave||'triangle'; this.timpani=!!M.timpani;
     if(!this.ctx||!this.enabled) return;
     this.nextT=this.ctx.currentTime+.06;
     if(this.timer) clearInterval(this.timer);
@@ -471,6 +472,7 @@ const Sound = {
           g2.gain.exponentialRampToValueAtTime(.0001,this.nextT+dur*.9);
           o2.connect(g2); g2.connect(this.mg); o2.start(this.nextT); o2.stop(this.nextT+dur);
         }
+        if(this.harm){ const hn=this.harm[i%this.harm.length]; if(hn){ const ho=this.ctx.createOscillator(), hg=this.ctx.createGain(); ho.type=this.harmWave; ho.frequency.setValueAtTime(hn,this.nextT); hg.gain.setValueAtTime(.0001,this.nextT); hg.gain.exponentialRampToValueAtTime(.30*inten,this.nextT+.02); hg.gain.exponentialRampToValueAtTime(.0001,this.nextT+dur*.85); ho.connect(hg); hg.connect(this.mg); ho.start(this.nextT); ho.stop(this.nextT+dur); } }
       }
       if(this.bass){
         const bn=this.bass[i%this.bass.length];
@@ -482,7 +484,7 @@ const Sound = {
           bo.connect(bg); bg.connect(this.mg); bo.start(this.nextT); bo.stop(this.nextT+dur);
         }
       }
-      if(this.perc && this.perc[i%this.perc.length]) this.noise(.05,.18*inten,this.nextT-this.ctx.currentTime,1600);
+      if(this.perc && this.perc[i%this.perc.length]){ this.noise(.05,.18*inten,this.nextT-this.ctx.currentTime,1600); if(this.timpani){ const to=this.ctx.createOscillator(), tg=this.ctx.createGain(); to.type='sine'; to.frequency.setValueAtTime(130,this.nextT); to.frequency.exponentialRampToValueAtTime(52,this.nextT+.18); tg.gain.setValueAtTime(.0001,this.nextT); tg.gain.exponentialRampToValueAtTime(.55*inten,this.nextT+.008); tg.gain.exponentialRampToValueAtTime(.0001,this.nextT+.34); to.connect(tg); tg.connect(this.mg); to.start(this.nextT); to.stop(this.nextT+.36); } }
       if(this.bell && i%16===0) this.bellHit(196,this.nextT-this.ctx.currentTime);
       if(this.organ && i%8===0) this.bellHit(98,this.nextT-this.ctx.currentTime,.10);
       if(this.water && Math.random()<.22) this.noise(.18,.05,this.nextT-this.ctx.currentTime,300);
@@ -508,28 +510,55 @@ function _seqFromTuples(tuples){
     seq.push(d!==1?{f,d}:{f}); bass.push(bf); }
   return { seq, bass };
 }
-// hero（生还线）：怪物猎人式恢弘交响，铜管三连音上行 + 弦乐拨奏 + 定音鼓，BPM≈140，A→B→A
-function _buildHeroMusic(){
-  const A=[[N.A4,1,N.A2],[N.C5,1,N.A2],[N.E5,1,N.A2],[N.A5,2,N.A2],[N.G5,1,N.E2],[N.E5,1,N.E2],[N.C5,2,N.C3],
-           [N.F4,1,N.F2],[N.A4,1,N.F2],[N.C5,1,N.F2],[N.F5,2,N.F2],[N.E5,1,N.C3],[N.C5,1,N.C3],[N.A4,2,N.A2]];
-  const B=[[N.C5,1,N.C3],[N.E5,1,N.C3],[N.G5,1,N.C3],[N.C6,2,N.C3],[N.B4,1,N.G2],[N.G5,1,N.G2],[N.E5,2,N.E2],
-           [N.D5,1,N.D3],[N.F5,1,N.D3],[N.A5,1,N.D3],[N.G5,2,N.G2],[N.E5,1,N.C3],[N.C5,1,N.C3],[N.D5,2,N.G2]];
-  const coda=[[N.A5,4,N.A2],[N.A4,4,N.A2]];
-  const tuples=[].concat(A,A,B,B,A,A,B,B,A,coda);
-  const {seq,bass}=_seqFromTuples(tuples);
-  return { tempo:.18, wave:'sawtooth', bassWave:'square', brass:true, choir:true,
-    perc:[1,0,0,1,0,0,1,0,1,0,0,1], seq, bass };
+// 三声部行：[主旋律f, 时值d, 低音bassF, 和声harmF]，0 表示该声部休止
+function _seq3(rows){
+  const seq=[], bass=[], harm=[];
+  for(const r of rows){ const f=r[0], d=r[1]||1, bf=r[2]||0, hf=r[3]||0;
+    seq.push(d!==1?{f,d}:{f}); bass.push(bf); harm.push(hf); }
+  return { seq, bass, harm };
 }
-// imperial（溺死线）：帝国进行曲式低沉压迫，低音铜管 + 附点节奏(短-短-长) + 军鼓，BPM≈100
+// hero（生还线）：怪物猎人「英雄之证」式恢弘交响 —— 铜管三连冲锋 + 弦乐拨奏 + 和声层 + 定音鼓，
+// 明显 引子→A→A→B→A→B→A→尾声 变奏结构，单轮循环 ≈44s，音量随 Boss 阶段(intensity)递增。
+function _buildHeroMusic(){
+  // 引子：铜管三连音冲锋号角
+  const FAN=[[N.A4,.5,N.A2,N.E4],[N.A4,.5,N.A2,N.E4],[N.A4,.5,N.A2,N.E4],[N.C5,1.5,N.A2,N.E4],
+             [N.G4,.5,N.G2,N.D4],[N.G4,.5,N.G2,N.D4],[N.G4,.5,N.G2,N.D4],[N.B4,1.5,N.G2,N.D4]];
+  // A：英雄主题（上行铜管 + 三度和声）
+  const A=[[N.A4,1,N.A2,N.C5],[N.C5,1,N.A2,N.E5],[N.E5,1,N.A2,N.A5],[N.A5,1.5,N.A2,N.C5],[N.G5,.5,N.E2,N.B4],
+           [N.E5,1,N.E2,N.G4],[N.C5,1,N.C3,N.E4],[N.D5,2,N.G2,N.B4],
+           [N.F5,1,N.F2,N.A4],[N.A5,1,N.F2,N.C5],[N.G5,1,N.C3,N.E5],[N.E5,1.5,N.C3,N.C5],[N.C5,.5,N.G2,N.G4],
+           [N.D5,1,N.G2,N.F4],[N.B4,1,N.G2,N.D4],[N.A4,2,N.A2,N.C5]];
+  // B：抒情桥段（弦乐拨奏上行）
+  const B=[[N.C5,1,N.C3,N.E5],[N.D5,1,N.C3,N.F5],[N.E5,1,N.C3,N.G5],[N.G5,2,N.C3,N.C6],[N.F5,1,N.F2,N.A5],
+           [N.E5,1,N.F2,N.G5],[N.D5,1,N.D3,N.F5],[N.C5,2,N.G2,N.E5],
+           [N.A4,1,N.A2,N.C5],[N.C5,1,N.A2,N.E5],[N.E5,1,N.E2,N.G5],[N.D5,2,N.G2,N.F5],[N.B4,1,N.G2,N.D5],
+           [N.C5,3,N.C3,N.E5]];
+  // 尾声：胜利强奏
+  const C=[[N.A5,1,N.A2,N.C5],[N.G5,1,N.E2,N.B4],[N.F5,1,N.F2,N.A4],[N.E5,1,N.C3,N.G4],
+           [N.A5,2,N.A2,N.C5],[N.E5,1,N.E2,N.G4],[N.A5,1,N.A2,N.C5],[N.C6,4,N.A2,N.E5]];
+  const round=[].concat(A,A,B,A,B,A,C);
+  const rows=[].concat(FAN,round,round,C);
+  const {seq,bass,harm}=_seq3(rows);
+  return { tempo:.17, wave:'sawtooth', bassWave:'square', harmWave:'triangle',
+    brass:true, timpani:true, perc:[1,0,0,1,0,1,0,0], seq, bass, harm };
+}
+// imperial（溺死线）：达斯维达「帝国进行曲」式沉重压迫 —— 低音铜管附点进行曲 + 军鼓 + 大鼓 + 小调和声，
+// 明显 A→A→B→A→C 段落循环 + 尾段收束，单轮循环 ≈43s，音量随 Boss 阶段(intensity)递增。
 function _buildImperialMusic(){
-  const A=[[N.A2,1,N.A2],[N.A2,1,N.A2],[N.A2,1,N.A2],[N.F2,1.5,N.F2],[N.C3,.5,N.C3],[N.A2,2,N.A2],
-           [N.F2,1.5,N.F2],[N.C3,.5,N.C3],[N.A2,2,N.A2]];
-  const B=[[N.E3,1,N.E2],[N.E3,1,N.E2],[N.E3,1,N.E2],[N.F3,1.5,N.F2],[N.C3,.5,N.C3],[N.Gs3,2,N.E2],
-           [N.F3,1.5,N.F2],[N.C3,.5,N.C3],[N.A3,2,N.A2]];
-  const tuples=[].concat(A,B,A,B,A,B,A,B,A,B,A,B);
-  const {seq,bass}=_seqFromTuples(tuples);
-  return { tempo:.24, wave:'sawtooth', bassWave:'square', brass:true,
-    perc:[1,0,0,1,0,0,1,1,0,0], seq, bass };
+  // A：主进行曲动机（短-短-长 附点）
+  const A=[[N.A3,1,N.A2,N.E3],[N.A3,1,N.A2,N.E3],[N.A3,1,N.A2,N.E3],[N.F3,1.5,N.F2,N.C3],[N.C4,.5,N.C3,N.A3],
+           [N.A3,2,N.A2,N.E3],[N.F3,1.5,N.F2,N.C3],[N.C4,.5,N.C3,N.A3],[N.A3,2,N.A2,N.E3]];
+  // B：升高一层的紧张再现
+  const B=[[N.E4,1,N.E2,N.B3],[N.E4,1,N.E2,N.B3],[N.E4,1,N.E2,N.B3],[N.F4,1.5,N.F2,N.C4],[N.C4,.5,N.C3,N.A3],
+           [N.Gs3,2,N.E2,N.E3],[N.F4,1.5,N.F2,N.C4],[N.C4,.5,N.C3,N.A3],[N.A4,2,N.A2,N.E4]];
+  // C：下行威压的发展段
+  const C=[[N.A4,1,N.A2,N.C4],[N.Gs4,1,N.E2,N.B3],[N.G4,1,N.G2,N.As3],[N.F4,1.5,N.F2,N.A3],[N.E4,.5,N.C3,N.Gs3],
+           [N.F4,2,N.F2,N.A3],[N.C4,2,N.C3,N.E3],[N.A3,2,N.A2,N.E3]];
+  const round=[].concat(A,A,B,A,C);
+  const rows=[].concat(round,round,round,A,B,A);
+  const {seq,bass,harm}=_seq3(rows);
+  return { tempo:.22, wave:'sawtooth', bassWave:'square', harmWave:'sawtooth',
+    brass:true, timpani:true, perc:[1,0,1,1,0,1,0,0], seq, bass, harm };
 }
 
 const MUSIC = {
@@ -549,9 +578,9 @@ const MUSIC = {
   lake:{ tempo:.15, wave:'triangle', bassWave:'sine', water:true,
     seq:[{f:N.E4},{f:N.G4},{f:N.E4},{f:N.A4},{f:N.E4},{f:N.G4},{f:N.C5},{f:N.B4},{f:N.A4},{f:N.G4},{f:N.A4},{f:N.E4},{f:N.D4},{f:N.E4}],
     bass:[N.A2,0,N.A2,0,N.F2,0,N.F2,0,N.C3,0,N.E2,0] },
-  // 第五幕 成功路线：英雄交响曲（怪物猎人式恢弘，≥30s 循环，A→B→A，见 _buildHeroMusic）
+  // 第五幕 成功路线：英雄交响曲（怪物猎人式恢弘，多声部+定音鼓，单轮≈44s，引子→A→B→A→尾声，见 _buildHeroMusic）
   hero:_buildHeroMusic(),
-  // 第五幕 失败路线：帝国进行曲式压迫（低沉铜管、附点节奏、军鼓，≥30s 循环，见 _buildImperialMusic）
+  // 第五幕 失败路线：帝国进行曲式压迫（低沉铜管、附点节奏、军鼓+大鼓+小调和声，单轮≈43s，见 _buildImperialMusic）
   imperial:_buildImperialMusic(),
   // 第一幕关底 恶灵先王：中世纪宫廷弦乐 + 低沉风琴，渐进紧张
   wraith:{ tempo:.28, wave:'triangle', bassWave:'sine', organ:true, perc:[1,0,0,0,1,0,0,0],
@@ -2237,12 +2266,18 @@ function ensureTraversable(lv){
 }
 function safeGroundSpots(lv){
   return (lv.platforms||[]).filter(p=>p.type==='ground'&&Math.abs(p.y-GROUND_TOP)<1&&p.w>=PLAYER_W+80)
-    .map(p=>({x1:p.x+30,x2:p.x+p.w-30,y:p.y,mid:p.x+p.w/2,w:p.w})).filter(s=>s.x2>s.x1)
+    .map(p=>({x1:p.x+46,x2:p.x+p.w-46,y:p.y,mid:p.x+p.w/2,w:p.w})).filter(s=>s.x2>s.x1)
     .sort((a,b)=>a.x1-b.x1);
 }
 function pointOverlapsBonusEntrance(lv, x, y){
   const body={x:x-PLAYER_W/2,y:y-PLAYER_H,w:PLAYER_W,h:PLAYER_H};
   return (lv.triggers||[]).some(tr=>tr.type==='bonusEntrance' && rectsOverlap(body,{x:tr.x-18,y:tr.y-18,w:tr.w+36,h:tr.h+36}));
+}
+// 检查点与趣味入口攀爬塔的水平距离（用于避免存档点落在入口正下方/攀爬区）
+function bonusColumnDist(lv, x){
+  let d=Infinity;
+  (lv.triggers||[]).forEach(tr=>{ if(tr.type==='bonusEntrance') d=Math.min(d, Math.abs((tr.x+tr.w/2)-x)); });
+  return d;
 }
 function checkpointHazardRisk(lv, x, y){
   const foot={x:x-PLAYER_W/2-8,y:y-8,w:PLAYER_W+16,h:16};
@@ -2259,7 +2294,9 @@ function safeSpawnPoint(lv, x, preferY){
     const sx=clamp(Number.isFinite(x)?x:s.mid, s.x1, s.x2);
     if(checkpointHazardRisk(lv, sx, s.y)) continue;
     if(pointOverlapsBonusEntrance(lv, sx, s.y)) continue;
-    const score=Math.abs(sx-(Number.isFinite(x)?x:s.mid)) + Math.abs((preferY||GROUND_TOP)-s.y)*2;
+    // 软性惩罚：远离趣味入口攀爬塔（<150px 记大额惩罚，仍保留可行解不至于无点可选）
+    const colPen = bonusColumnDist(lv, sx)<150 ? 600 : 0;
+    const score=Math.abs(sx-(Number.isFinite(x)?x:s.mid)) + Math.abs((preferY||GROUND_TOP)-s.y)*2 + colPen;
     if(score<bestScore){ best={x:sx,y:s.y}; bestScore=score; }
   }
   if(best) return best;
@@ -2990,6 +3027,17 @@ let bonusBoardAct=0;
 let bonusExitCooldownUntil=0;         // 退出趣味关后短暂冷却，避免回到主线入口后立刻重进
 
 const BONUS_TITLES = ['登高挑战','宫廷回廊',"Monica's Test",'英格兰迷宫','决战前的独白'];
+// 第五幕「决战前的独白」·全屏戏剧演出台词（To be or not to be，中英对照，逐行淡入）
+const ACT5_MONOLOGUE = [
+  { en:'To be, or not to be, that is the question:', zh:'生存还是毁灭，这是一个值得考虑的问题；' },
+  { en:"Whether 'tis nobler in the mind to suffer", zh:'究竟是默然忍受命运暴虐的毒箭，' },
+  { en:'The slings and arrows of outrageous fortune,', zh:'还是挺身反抗人世无涯的苦难，' },
+  { en:'Or to take arms against a sea of troubles,', zh:'通过斗争把它们扫清，' },
+  { en:'And by opposing end them? To die: to sleep;', zh:'这两种行为，哪一种更为高贵？死了；睡着了；' },
+  { en:'No more; and by a sleep to say we end', zh:'什么都完了；倘若在这一种睡眠之中，' },
+  { en:'The heart-ache and the thousand natural shocks.', zh:'心头的创痛，以及无数血肉之躯难免的打击，都能从此消失，' },
+  { en:'The rest is silence.', zh:'此外仅余沉默。' }
+];
 function messageWidth(text){
   let width=0;
   for(const ch of text){ width += ch.charCodeAt(0)>127 ? 2 : 1; }
@@ -3184,6 +3232,8 @@ function buildBonusLevel(bonusAct){
     const LX=740, RX=920, PW=150;
     [[RX,66],[LX,132],[RX,198],[LX,264],[RX,330],[LX,396],[RX,462]].forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:PW,h:14,type:'plat'}));
     lv.platforms.push({x:700,y:GROUND_TOP-528,w:400,h:16,type:'plat',board:true}); // 顶点特效区
+    // 决战前的独白：进入后先播放一段全屏戏剧演出，结束/跳过后再开始登高
+    lv.monologue={ t:0, line:0, lineT:0, fade:0, walk:0, facing:1, ending:false, done:false, skipped:false, skipRect:null };
   }
   placeBonusExitPortal(lv, bonusAct);
   return lv;
@@ -3225,21 +3275,38 @@ function findSafeBonusPlatformX(lv, platformW, fallbackX){
   }
   return fallbackX;
 }
+function groundSegAt(lv, x){
+  const gs=(lv.platforms||[]).filter(p=>p.type==='ground' && x>=p.x && x<=p.x+p.w).sort((a,b)=>b.w-a.w)[0];
+  return gs?{x1:gs.x, x2:gs.x+gs.w}:null;
+}
 function createBonusEntrance(lv, mainAct){
   const bonusAct = mainAct===ACT_ENGLAND ? 4 : (mainAct===ACT_FINAL ? 5 : mainAct+1);
   const cfg = BONUS_PLATFORM_CONFIGS[mainAct-1] || BONUS_PLATFORM_CONFIGS[0];
-  const platformW = 160;
-  const platformH = 14;
-  const fallbackX = Math.min(Math.max(40, cfg.platformX), Math.max(40, lv.width-220));
-  const platformX = findSafeBonusPlatformX(lv, platformW, fallbackX);
-  // 高台高度：低于跳跃极限（GROUND_TOP-118 可达），高于步行头顶（GROUND_TOP-44），主动跳可上、走路不撞
-  const platformY = GROUND_TOP - 88;
-  lv.platforms.push({x:platformX,y:platformY,w:platformW,h:platformH,type:'plat',color:'#c8a84b'});
-  const safeMin = platformX - 180;
-  const safeMax = platformX + platformW + 180;
+  const platformW = 150, platformH = 14;
+  const fallbackX = Math.min(Math.max(380, cfg.platformX), Math.max(380, lv.width-260));
+  let baseX = findSafeBonusPlatformX(lv, platformW, fallbackX);
+  // 与已有空中平台（桥/踏脚石）保持横向偏移，避免入口贴着主线跳跃落点；偏移后仍须落在同一整块地面上
+  const seg = groundSegAt(lv, baseX);
+  const insideSeg = (bx)=> !seg || (bx-70>=seg.x1+40 && bx+platformW+30<=seg.x2-40);
+  const existingPlats = (lv.platforms||[]).filter(p=>p.type!=='ground' && Math.abs(p.y-(GROUND_TOP-140))<160);
+  const tooClose = (bx)=> existingPlats.some(p=> bx < p.x+p.w+platformW && bx+platformW > p.x-platformW);
+  if(tooClose(baseX)){
+    for(const cand of [baseX+platformW+60, baseX-platformW-60, baseX+2*(platformW+60)]){
+      if(insideSeg(cand) && !tooClose(cand)){ baseX=cand; break; }
+    }
+  }
+  // 入口高台：抬到「地面起跳峰值(≈GROUND_TOP-172)」之上，普通行进/跳跃绝不触发；须专程踩踏脚石攀爬
+  const entranceY = GROUND_TOP - 196;
+  // 之字形踏脚石（逐级抬升，rise<MAX_JUMP_UP / gap<MAX_JUMP_DX，单跳可达），整体紧凑落在安全地面段内
+  lv.platforms.push({x:baseX+40, y:GROUND_TOP-72,  w:80,  h:platformH, type:'plat', color:'#b7972f', bonusStep:true});
+  lv.platforms.push({x:baseX-60, y:GROUND_TOP-140, w:80,  h:platformH, type:'plat', color:'#bf9f37', bonusStep:true});
+  lv.platforms.push({x:baseX,    y:entranceY,      w:platformW, h:platformH, type:'plat', color:'#c8a84b', bonusPad:true});
+  // 触发区：必须「站上入口高台」才触发（贴台面上方 40px），不再悬浮于主线跳跃路径头顶
+  lv.triggers.push({x:baseX+platformW/2-32, y:entranceY-40, w:64, h:40, type:'bonusEntrance', fired:false, persist:true, bonusAct, hint:cfg.hint});
+  // 清理攀爬区间内的敌人/陷阱，保证专程攀爬过程安全
+  const safeMin = baseX-100, safeMax = baseX+platformW+100;
   if(lv.enemySpawns) lv.enemySpawns = lv.enemySpawns.filter(s=>s.x<safeMin || s.x>safeMax);
-  if(lv.hazards) lv.hazards = lv.hazards.filter(h=>h.x<safeMin || h.x+(h.w||0)>safeMax);
-  lv.triggers.push({x:platformX+30,y:platformY-60,w:100,h:60,type:'bonusEntrance',fired:false,persist:true,bonusAct,hint:cfg.hint});
+  if(lv.hazards) lv.hazards = lv.hazards.filter(h=>h.x+(h.w||0)<safeMin || h.x>safeMax);
 }
 function saveBonusReturn(entranceTrigger){
   return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats), entrance: entranceTrigger ? {x:entranceTrigger.x, y:entranceTrigger.y, w:entranceTrigger.w, h:entranceTrigger.h} : null };
@@ -4372,10 +4439,17 @@ function finishBonus(){
 }
 function updateBonusPlay(){
   stats.time += 1/60;
+  // 第五幕「决战前的独白」：全屏戏剧演出期间冻结操作，演出结束/跳过后再进入登高
+  if(bonusLevel.act===5 && level.monologue && !level.monologue.done){
+    updateBonusMonologue();
+    keys.left=keys.right=keys.jump=keys.atk=keys.ranged=false;
+    jumpEdge=atkEdge=rangedEdge=false;
+    if(++hudTick%4===0) updateHUD();
+    return;
+  }
   updateMovers(); updatePlayer();
   if(player.dead) return;
   if(bonusLevel.act!==5){ updateEnemies(); updateProjectiles(); updatePickups(); }
-  if(bonusLevel.act===5) updateBonusMonologue();
   if(level.exitPortal && rectsOverlap(player, level.exitPortal)){
     flash('#e8c25a',14);
     exitBonus(true);
@@ -4400,13 +4474,21 @@ function updateBonusPlay(){
   if(++hudTick%4===0) updateHUD();
 }
 function updateBonusMonologue(){
-  const m=level.monologue; if(!m) return;
-  const text='To be, or not to be, that is the question:\n生存，还是毁灭，这是个问题';
-  const totalF=60*12;
+  const m=level.monologue; if(!m||m.done) return;
   m.t++;
-  if(m.t>=120 && m.t<=480 && m.typed<text.length && m.t%4===0) m.typed++;
-  if(m.t>=600) m.fade=Math.min(120,m.fade+1);
-  if(m.t>=totalF) m.done=true;
+  m.walk += 0.016;                      // 踱步驱动
+  m.facing = Math.cos(m.walk)>=0 ? 1 : -1;
+  const lines=ACT5_MONOLOGUE, introF=70, perLine=175;
+  if(m.ending){ m.fade+=2.2; if(m.fade>=70) m.done=true; return; }
+  if(m.t<introF) return;                // 开场聚光灯淡入
+  const local=m.t-introF;
+  m.line=Math.floor(local/perLine);
+  m.lineT=local-m.line*perLine;
+  if(m.line>=lines.length){ m.line=lines.length-1; m.ending=true; m.fade=0; }
+}
+function skipBonusMonologue(){
+  const m=(bonusLevel && level && level.monologue) ? level.monologue : null;
+  if(m && !m.done && !m.ending){ m.ending=true; m.fade=0; m.skipped=true; }
 }
 
 /* -------------------------------------------------------------------------
@@ -4511,88 +4593,133 @@ function drawBonusOverlay(){
   ctx.fillStyle='#c4b98f'; ctx.font='12px "Courier New",monospace';
   ctx.fillText('可选支线 · Esc 放弃返回主线', 28, 126);
   if(level.deaths!==undefined){ ctx.fillStyle='#ff8a8a'; ctx.fillText('本局死亡次数 '+level.deaths, W-190, 104); }
-  if(level.monologue) drawBonusMonologueScene();
+  if(level.monologue && !level.monologue.done) drawBonusMonologueScene();
   ctx.restore();
 }
-function drawAct5Background(ctx, alpha){
-  ctx.save();
-  ctx.globalAlpha = alpha * 0.35;
-  const cx=W*0.5, cy=H*0.45, s=H*0.75;
-  ctx.fillStyle='#0d0d12';
-  ctx.beginPath(); ctx.ellipse(cx,cy+s*0.1,s*0.22,s*0.38,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#c8a882';
-  ctx.beginPath(); ctx.ellipse(cx-s*0.02,cy-s*0.28,s*0.09,s*0.12,-0.15,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='rgba(55,36,18,0.6)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(cx+s*0.04,cy-s*0.31); ctx.lineTo(cx+s*0.08,cy-s*0.27); ctx.lineTo(cx+s*0.03,cy-s*0.26); ctx.stroke();
-  ctx.fillStyle='#2a1a0a';
-  ctx.beginPath(); ctx.arc(cx-s*0.04,cy-s*0.35,s*0.085,Math.PI,0); ctx.fill();
-  for(let i=0;i<5;i++){ ctx.beginPath(); ctx.arc(cx-s*0.08+i*s*0.018,cy-s*0.37,s*0.015,0,Math.PI*2); ctx.fill(); }
-  ctx.fillStyle='#e8e0d0';
-  ctx.beginPath(); ctx.moveTo(cx-s*0.04,cy-s*0.18); ctx.lineTo(cx-s*0.06,cy-s*0.12); ctx.lineTo(cx,cy-s*0.10); ctx.lineTo(cx+s*0.02,cy-s*0.12); ctx.lineTo(cx,cy-s*0.18); ctx.fill();
-  ctx.fillStyle='#c8a820';
-  ctx.fillRect(cx+s*0.12,cy-s*0.14,s*0.055,s*0.025); ctx.fillRect(cx-s*0.18,cy-s*0.14,s*0.055,s*0.025);
-  for(let i=0;i<6;i++){ ctx.fillStyle=i%2?'#f2dc78':'#9b7514'; ctx.fillRect(cx-s*0.17+i*s*0.01,cy-s*0.135,2,2); ctx.fillRect(cx+s*0.13+i*s*0.01,cy-s*0.135,2,2); }
-  ctx.fillStyle='#0d0d12';
-  ctx.fillRect(cx+s*0.14,cy-s*0.12,s*0.06,s*0.22); ctx.fillRect(cx-s*0.22,cy-s*0.12,s*0.06,s*0.22);
-  ctx.restore();
-}
-function drawAct5Spotlight(ctx, t, totalFrames){
-  const fadeIn=Math.min(1,t/120);
-  const fadeOut=t>totalFrames-240 ? 1-((t-(totalFrames-240))/120) : 1;
-  const alpha=clamp(fadeIn*fadeOut,0,1);
-  const narrow= t>480 ? clamp((t-480)/120,0,1) : 0;
-  const cx=W*0.5, top=0, bottom=H*0.75, topHalf=60-25*narrow, bottomHalf=90-42*narrow;
-  const grad=ctx.createLinearGradient(cx,top,cx,bottom);
-  grad.addColorStop(0,'rgba(255,255,220,0)');
-  grad.addColorStop(0.3,'rgba(255,255,220,'+(alpha*0.85)+')');
-  grad.addColorStop(1,'rgba(255,255,220,'+(alpha*0.15)+')');
-  ctx.save(); ctx.beginPath(); ctx.moveTo(cx-topHalf,top); ctx.lineTo(cx+topHalf,top); ctx.lineTo(cx+bottomHalf,bottom); ctx.lineTo(cx-bottomHalf,bottom); ctx.closePath(); ctx.fillStyle=grad; ctx.fill(); ctx.restore();
-}
-function drawAct5Toys(ctx, t, toys){
-  toys.forEach(toy=>{
-    if(t<120) return;
-    if(toy.vy!==undefined && toy.y<toy.groundY){ toy.vy+=0.4; toy.y+=toy.vy; if(toy.y>=toy.groundY){ toy.y=toy.groundY; toy.vy=0; } }
-    ctx.save(); ctx.translate(toy.x,toy.y);
-    if(toy.type==='block'){
-      ctx.fillStyle=toy.color; ctx.fillRect(-8,-8,16,16); ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.strokeRect(-8,-8,16,16);
-    } else if(toy.type==='soldier'){
-      ctx.fillStyle='#cc2222'; ctx.fillRect(-4,-10,8,10); ctx.beginPath(); ctx.arc(0,-13,4,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#2a1a0a'; ctx.fillRect(-5,-17,10,2); ctx.fillStyle='#d8b088'; ctx.fillRect(-7,-5,3,9);
-    } else if(toy.type==='carousel'){
-      toy.rot=(toy.rot||0)+0.01; ctx.rotate(toy.rot); ctx.strokeStyle='#8866aa'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke();
-      for(let i=0;i<4;i++){ const a=i*Math.PI/2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*14,Math.sin(a)*14); ctx.stroke(); }
-      ctx.fillStyle='rgba(240,233,214,0.8)'; ctx.fillRect(6,-3,6,4); ctx.fillRect(10,-1,3,2);
-    }
-    ctx.restore();
-  });
-}
-function drawAct5HamletFigure(ctx, t){
-  const cx=W*0.5, footY=H*0.72, rise=clamp((t-120)/120,0,1), bow=t>480?clamp((t-480)/120,0,1):0;
-  const crouch=1-rise+bow*0.55, shoulderBlink=(Math.sin(t*0.22)>0.55)?1:0;
-  ctx.save(); ctx.translate(cx,footY); ctx.scale(2.35,2.35);
-  ctx.fillStyle='#0b0b10'; ctx.fillRect(-7,-34+10*crouch,14,30-8*crouch);
-  ctx.fillStyle='#c8a882'; ctx.fillRect(-5,-46+16*crouch,10,10);
-  ctx.fillStyle='#231407'; ctx.fillRect(-7,-49+16*crouch,14,4); ctx.fillRect(-8,-46+16*crouch,3,4);
-  ctx.fillStyle='#e8e0d0'; ctx.fillRect(-3,-33+10*crouch,6,5);
-  ctx.fillStyle=shoulderBlink?'#f2dc78':'#b89424'; ctx.fillRect(-10,-32+10*crouch,5,2); ctx.fillRect(5,-32+10*crouch,5,2);
-  ctx.fillStyle='#0b0b10'; ctx.fillRect(-12,-29+11*crouch,5,17-5*crouch); ctx.fillRect(7,-29+11*crouch,5,17-5*crouch);
-  ctx.fillRect(-6,-7,5,8); ctx.fillRect(1,-7,5,8);
-  ctx.restore();
-}
+// ===== 第五幕「决战前的独白」：全屏 Canvas 戏剧演出（参考 NT Live 卷福版舞台演出感）=====
 function drawBonusMonologueScene(){
-  const m=level.monologue, text='To be, or not to be, that is the question:\n生存，还是毁灭，这是个问题';
-  const t5=m.t||0, totalF=60*12;
+  const m=level.monologue; if(!m||m.done) return;
+  const introA=clamp(m.t/45,0,1);
+  const endA=m.ending ? 1-clamp(m.fade/70,0,1) : 1;
+  const alpha=clamp(introA*endA,0,1);
+  if(alpha<=0) return;
+  const px=W*0.5 + Math.sin(m.walk)*W*0.11;      // 舞台踱步位置
   ctx.save(); ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle='rgba(0,0,0,.94)'; ctx.fillRect(0,0,W,H);
-  const alpha=1-clamp((m.fade-40)/80,0,1);
-  drawAct5Background(ctx, alpha);
-  drawAct5Spotlight(ctx, t5, totalF);
-  drawAct5Toys(ctx, t5, level._act5Toys || []);
-  drawAct5HamletFigure(ctx, t5);
-  ctx.globalAlpha=alpha; ctx.fillStyle='#f0e9d6'; ctx.font='16px "Courier New",monospace'; ctx.textAlign='center';
-  const shown=text.slice(0,m.typed); const parts=shown.split('\n');
-  if(parts[0]) ctx.fillText(parts[0], W/2, 132);
-  if(parts[1]) ctx.fillText(parts[1], W/2, 160);
-  ctx.globalAlpha=1; ctx.restore();
+  ctx.globalAlpha=alpha;
+  ctx.fillStyle='#040408'; ctx.fillRect(0,0,W,H); // 戏剧黑场（全屏覆盖玩法层）
+  _monoBackdrop(m);
+  _monoSpotlight(m, px);
+  _monoHamlet(m, px);
+  _monoSubtitles(m, alpha);
+  ctx.globalAlpha=1;
+  _monoSkipButton(m);          // 右下角固定跳过（始终不透明、置于最上层）
+  ctx.restore();
+}
+// 舞台背景：第五幕城堡 + 墓地夜景（月亮 / 城堡剪影 / 墓碑 / 薄雾）
+function _monoBackdrop(m){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a0c1a'); sky.addColorStop(0.5,'#12102a'); sky.addColorStop(1,'#080610');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+  // 月亮 + 光晕
+  const mx=W*0.80, my=H*0.20, mr=48;
+  const mg=ctx.createRadialGradient(mx,my,4,mx,my,mr*2.6);
+  mg.addColorStop(0,'rgba(232,236,255,0.85)'); mg.addColorStop(0.32,'rgba(190,205,245,0.4)'); mg.addColorStop(1,'rgba(110,130,200,0)');
+  ctx.fillStyle=mg; ctx.beginPath(); ctx.arc(mx,my,mr*2.6,0,6.283); ctx.fill();
+  ctx.fillStyle='#e8ecff'; ctx.beginPath(); ctx.arc(mx,my,mr,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(150,160,205,0.35)'; ctx.beginPath(); ctx.arc(mx+13,my-7,9,0,6.283); ctx.arc(mx-9,my+11,6,0,6.283); ctx.fill();
+  // 城堡剪影（城墙 + 雉堞 + 塔楼 + 尖顶 + 微光窗）
+  const gy=H*0.62;
+  ctx.fillStyle='#0c0a16';
+  ctx.fillRect(0,gy-70,W,70);
+  for(let x=0;x<W;x+=34) ctx.fillRect(x,gy-84,20,16);
+  [[W*0.12,150],[W*0.37,120],[W*0.63,132],[W*0.9,172]].forEach(tw=>{
+    const tx=tw[0], th=tw[1];
+    ctx.fillStyle='#0c0a16'; ctx.fillRect(tx-26,gy-th,52,th);
+    for(let x=tx-26;x<tx+26;x+=18) ctx.fillRect(x,gy-th-12,10,12);
+    ctx.beginPath(); ctx.moveTo(tx-30,gy-th); ctx.lineTo(tx,gy-th-42); ctx.lineTo(tx+30,gy-th); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,208,118,'+(0.22+0.14*Math.sin(frame*0.05+tx))+')'; ctx.fillRect(tx-5,gy-th*0.6,10,16);
+  });
+  // 墓地草坡
+  const gg=ctx.createLinearGradient(0,gy,0,H); gg.addColorStop(0,'#141628'); gg.addColorStop(1,'#090a14');
+  ctx.fillStyle=gg; ctx.fillRect(0,gy,W,H-gy);
+  // 前景墓碑
+  [[W*0.07,1.05],[W*0.20,0.85],[W*0.93,1.0],[W*0.78,0.8]].forEach(s=>{
+    const sx=s[0], sc=s[1], by=H*0.9;
+    ctx.fillStyle='#1b1d2d'; ctx.fillRect(sx-14*sc,by-40*sc,28*sc,40*sc);
+    ctx.beginPath(); ctx.arc(sx,by-40*sc,14*sc,Math.PI,0); ctx.fill();
+    ctx.fillStyle='#262a3c'; ctx.fillRect(sx-3*sc,by-33*sc,6*sc,20*sc); ctx.fillRect(sx-9*sc,by-27*sc,18*sc,5*sc);
+  });
+  // 薄雾
+  ctx.fillStyle='rgba(150,160,190,0.055)';
+  for(let i=0;i<3;i++){ const fy=gy+24+i*30, off=((frame*0.35+i*140)%(W+240))-120; ctx.beginPath(); ctx.ellipse(off,fy,190,22,0,0,6.283); ctx.fill(); }
+}
+// 聚光灯：从舞台顶部投向踱步中的哈姆雷特
+function _monoSpotlight(m, px){
+  const top=-10, bottom=H*0.94, topHalf=42, botHalf=155;
+  const grad=ctx.createLinearGradient(0,top,0,bottom);
+  grad.addColorStop(0,'rgba(255,250,225,0)');
+  grad.addColorStop(0.16,'rgba(255,248,220,0.30)');
+  grad.addColorStop(1,'rgba(255,244,210,0.05)');
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(px-topHalf,top); ctx.lineTo(px+topHalf,top);
+  ctx.lineTo(px+botHalf,bottom); ctx.lineTo(px-botHalf,bottom); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.globalAlpha*=0.45; ctx.fillStyle='rgba(255,244,210,0.5)';
+  ctx.beginPath(); ctx.ellipse(px,H*0.9,botHalf*0.72,20,0,0,6.283); ctx.fill();
+  ctx.restore();
+}
+// 大立绘哈姆雷特：约占画面 64% 高，踱步 + 转身动画
+function _monoHamlet(m, px){
+  const scale=H*0.64/170;
+  const footY=H*0.9;
+  const bob=Math.sin(m.walk*2)*3.5;
+  const sx=m.facing*(0.45+0.55*Math.abs(Math.cos(m.walk)));  // 转身：转折点收窄
+  ctx.save();
+  ctx.translate(px, footY-90*scale+bob);
+  ctx.scale(sx*scale, scale);
+  drawVectorHamletPortrait(ctx, 4, !!(typeof opheliaSaved!=='undefined' && opheliaSaved), false);
+  ctx.restore();
+}
+// 字幕：中英对照台词框，逐行淡入，保留上一行淡出
+function _monoSubtitles(m, alpha){
+  if(m.t<70 && !m.ending) return;
+  const lines=ACT5_MONOLOGUE, idx=clamp(m.line,0,lines.length-1);
+  const lineA=m.ending?1:clamp(m.lineT/38,0,1);
+  const boxY=H-150, boxH=100;
+  ctx.save(); ctx.textAlign='center';
+  const bg=ctx.createLinearGradient(0,boxY,0,boxY+boxH);
+  bg.addColorStop(0,'rgba(8,6,14,0)'); bg.addColorStop(0.28,'rgba(8,6,14,0.74)'); bg.addColorStop(1,'rgba(8,6,14,0.74)');
+  ctx.fillStyle=bg; ctx.fillRect(0,boxY,W,boxH+40);
+  ctx.strokeStyle='rgba(214,174,69,0.5)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(W*0.16,boxY+10); ctx.lineTo(W*0.84,boxY+10); ctx.stroke();
+  // 角色名牌
+  ctx.globalAlpha=alpha; ctx.textAlign='left';
+  ctx.fillStyle='rgba(214,174,69,0.9)'; ctx.font='bold 13px "Courier New",monospace';
+  ctx.fillText('哈姆雷特 · HAMLET', W*0.16, boxY-14);
+  ctx.textAlign='center';
+  // 上一行（淡出）
+  if(idx>0){ const p=lines[idx-1]; ctx.globalAlpha=alpha*0.3;
+    ctx.fillStyle='#b9b28f'; ctx.font='italic 13px Georgia,serif'; ctx.fillText(p.en, W/2, boxY-2);
+    ctx.fillStyle='#9a9478'; ctx.font='13px "Songti SC",serif'; ctx.fillText(p.zh, W/2, boxY+14);
+  }
+  // 当前行（逐行淡入）
+  const c=lines[idx]; ctx.globalAlpha=alpha*lineA;
+  ctx.fillStyle='#f3d36a'; ctx.font='italic bold 17px Georgia,serif'; ctx.fillText(c.en, W/2, boxY+44);
+  ctx.fillStyle='#f5efe0'; ctx.font='bold 18px "Songti SC",serif'; ctx.fillText(c.zh, W/2, boxY+74);
+  ctx.restore();
+}
+// 右下角固定跳过按钮（记录命中区供点击/触摸判定）
+function _monoSkipButton(m){
+  const w=132, h=34, x=W-w-18, y=H-h-14;
+  m.skipRect={x,y,w,h};
+  const pulse=0.6+0.25*Math.sin(frame*0.12);
+  ctx.save();
+  ctx.fillStyle='rgba(10,8,16,0.82)'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='rgba(214,174,69,'+pulse+')'; ctx.lineWidth=1.6; ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#f3d36a'; ctx.font='bold 14px "Courier New",monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('跳过 SKIP ▶', x+w/2, y+h/2+1);
+  ctx.restore();
 }
 function drawPlayerWorld(){
   const p=player;
@@ -4915,7 +5042,22 @@ dom.messageInput.addEventListener('input', updateMessageMeta);
 dom.nicknameEditBtn.addEventListener('click', ()=>enterNicknameSetup(true));
 updateNicknameHud();
 // 结局推进：点击画布 / 回车
-canvas.addEventListener('click', ()=>{ if(state==='ending') endingProceed(); });
+canvas.addEventListener('click', (e)=>{
+  if(state==='ending'){ endingProceed(); return; }
+  // 第五幕独白：点击右下角跳过按钮
+  const m=(bonusLevel && level && level.monologue) ? level.monologue : null;
+  if(m && !m.done && m.skipRect){
+    const r=canvas.getBoundingClientRect();
+    const cx=(e.clientX-r.left)*(W/r.width), cy=(e.clientY-r.top)*(H/r.height);
+    const s=m.skipRect;
+    if(cx>=s.x && cx<=s.x+s.w && cy>=s.y && cy<=s.y+s.h) skipBonusMonologue();
+  }
+});
+window.addEventListener('keydown', e=>{
+  if((e.code==='Enter'||e.code==='Space') && bonusLevel && level && level.monologue && !level.monologue.done){
+    skipBonusMonologue(); e.preventDefault();
+  }
+});
 window.addEventListener('keydown', e=>{ if((e.code==='Enter'||e.code==='Space') && state==='ending'){ endingProceed(); } });
 // 首次任意键解锁音频
 window.addEventListener('keydown', ()=>Sound.unlock(), {once:true});
