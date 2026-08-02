@@ -62,7 +62,10 @@
   /* 剧情过场 */
   #storyScreen{background:rgba(3,2,6,.9);overflow:hidden}
   #storyFx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
-  .storyWrap{position:relative;z-index:2;max-width:640px;width:70%;background:rgba(8,6,14,.58);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62);backdrop-filter:blur(1px)}
+  .storyWrap{position:relative;z-index:2;max-width:860px;width:70%;background:rgba(8,6,14,.58);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62);backdrop-filter:blur(1px);display:grid;grid-template-columns:60% 40%;column-gap:0;box-sizing:border-box}
+  .storyTextPanel{min-width:0;padding-right:18px;box-sizing:border-box}
+  .storyPortraitPanel{position:relative;display:flex;align-items:center;justify-content:center;min-height:250px;overflow:hidden;pointer-events:none}
+  #storyPortrait{width:100%;max-width:300px;height:260px;display:block;filter:drop-shadow(0 18px 28px rgba(0,0,0,.72))}
   #storyAct{font-size:14px;letter-spacing:6px;color:var(--gold);opacity:.8;margin-bottom:10px}
   #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:22px;text-shadow:2px 2px 0 #000}
   #storyBody{min-height:200px;text-align:left;font-size:clamp(14px,1.9vw,19px);line-height:2.05;color:#e6dfce}
@@ -71,7 +74,7 @@
   #storyBody .en{font-style:italic;color:#8f96ab;font-size:.82em;margin:0 0 20px}
   #storyBody .speak{color:#e8c25a;text-shadow:0 0 10px rgba(232,194,90,.22)}
   @keyframes storyLineIn{to{opacity:1;transform:translateY(0)}}
-  .storyFoot{margin-top:24px;display:flex;gap:14px;justify-content:center;align-items:center}
+  .storyFoot{grid-column:1 / 3;margin-top:24px;display:flex;gap:14px;justify-content:center;align-items:center}
   #sceneFade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:30;transition:opacity .4s ease}
   #sceneFade.show{opacity:1}
 
@@ -80,7 +83,7 @@
   #tLeft{left:14px}#tRight{left:92px}#tJump{right:158px}#tAtk{right:82px;background:rgba(139,26,26,.28);border-color:rgba(226,59,59,.6)}#tRanged{right:14px;background:rgba(185,139,255,.22);border-color:rgba(185,139,255,.6)}
 
   /* 常驻对白栏（非阻断：显示时游戏继续，左哈姆雷特 / 右登场角色，淡入淡出） */
-  #dlgBar{position:absolute;top:70px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:0 14px;pointer-events:none;z-index:9;gap:10px;font-family:"Georgia","Songti SC",serif}
+  #dlgBar{position:absolute;top:96px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:0 14px;pointer-events:none;z-index:9;gap:10px;font-family:"Georgia","Songti SC",serif}
   .dlg{max-width:44%;background:linear-gradient(rgba(12,9,20,.86),rgba(12,9,20,.66));border:1px solid rgba(232,194,90,.32);border-radius:9px;padding:7px 12px;opacity:0;transform:translateY(-10px);transition:opacity .42s ease,transform .42s ease;text-shadow:1px 1px 0 #000;box-shadow:0 3px 14px rgba(0,0,0,.5)}
   .dlg.show{opacity:1;transform:translateY(0)}
   .dlg.left{border-left:3px solid #e8c25a}
@@ -172,9 +175,14 @@
     <div id="storyScreen" class="overlay hidden">
       <canvas id="storyFx" width="960" height="540"></canvas>
       <div class="storyWrap">
-        <div id="storyAct"></div>
-        <div id="storyTitle"></div>
-        <div id="storyBody"></div>
+        <div class="storyTextPanel">
+          <div id="storyAct"></div>
+          <div id="storyTitle"></div>
+          <div id="storyBody"></div>
+        </div>
+        <div class="storyPortraitPanel">
+          <canvas id="storyPortrait" width="300" height="260"></canvas>
+        </div>
         <div class="storyFoot">
           <button id="skipBtn" class="btn ghost">跳过 ▸</button>
           <button id="storyBtn" class="btn">继续</button>
@@ -196,7 +204,7 @@
     <!-- Player nickname -->
     <div id="nicknameScreen" class="overlay hidden">
       <div class="nicknameCard">
-        <h2>为你的王子取一个名字</h2>
+        <h2>想起你的灵魂</h2>
         <div class="nicknameHint">昵称会用于留言板与击杀排行。ASCII 最多 15 字符，中文/非 ASCII 最多 10 字符，混合宽度不超过 20。</div>
         <input id="nicknameInput" type="text" autocomplete="nickname" maxlength="20" placeholder="输入昵称……">
         <div id="nicknameMeta"><span id="nicknameCount">宽度 0/20</span><span id="nicknameError"></span></div>

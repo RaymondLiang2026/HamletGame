@@ -429,7 +429,7 @@ const dom = {
   muteBtn:$('muteBtn'), ctrlHint:$('ctrlHint'), hintRanged:$('hintRanged'), hintLock:$('hintLock'),
   levelName:$('levelName'),
   dlgBar:$('dlgBar'), dlgLeft:$('dlgLeft'), dlgRight:$('dlgRight'), bossGuide:$('bossGuide'),
-  storyScreen:$('storyScreen'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'),
+  storyScreen:$('storyScreen'), storyFx:$('storyFx'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'), storyPortrait:$('storyPortrait'),
   skipBtn:$('skipBtn'), storyBtn:$('storyBtn'),
   titleScreen:$('titleScreen'), startBtn:$('startBtn'),
   levelClearScreen:$('levelClearScreen'), clearText:$('clearText'), clearScore:$('clearScore'), nextBtn:$('nextBtn'),
@@ -1965,6 +1965,7 @@ function buildGroundRange(lv,rng,x0,x1,cfg){
    12. 剧情过场系统（逐行淡入 + 粒子 + 矢量剪影立绘）
    ------------------------------------------------------------------------- */
 let storyFxCtx=dom.storyFx?dom.storyFx.getContext('2d'):null;
+let storyPortraitCtx=dom.storyPortrait?dom.storyPortrait.getContext('2d'):null;
 let storyPages=[], storyPageIdx=0, storyDoneCb=null;
 let storyPieces=[], storyLineIdx=0, storyLineTick=0, storyComplete=false, storyPage=null;
 let storyParticles=[];
@@ -2000,6 +2001,7 @@ function loadStoryPage(){
   storyPieces=buildPagePieces(storyPage); storyLineIdx=0; storyLineTick=0; storyComplete=false;
   resetStoryParticles(storyThemeAct(storyPage));
   renderStory();
+  renderStoryPortrait();
 }
 function escapeHtml(text){ return String(text).replace(/[&<>"]/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch])); }
 function renderStory(){
@@ -2010,8 +2012,30 @@ function renderStory(){
   }
   dom.storyBody.innerHTML=html;
 }
+function renderStoryPortrait(){
+  if(!storyPortraitCtx || !dom.storyPortrait) return;
+  const c=storyPortraitCtx, act=storyThemeAct(storyPage||{});
+  c.clearRect(0,0,dom.storyPortrait.width,dom.storyPortrait.height);
+  const gold=act===ACT_FINAL && opheliaSaved && !darkMode;
+  const doom=act===ACT_FINAL && (!opheliaSaved || darkMode);
+  const glow=c.createRadialGradient(150,126,12,150,126,128);
+  glow.addColorStop(0,gold?'rgba(232,194,90,.24)':(doom?'rgba(96,45,135,.28)':'rgba(120,130,170,.22)'));
+  glow.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=glow; c.fillRect(0,0,300,260);
+  c.save();
+  c.globalAlpha=.96;
+  if(typeof drawHamletPortrait==='function'){
+    const saved=ctx; ctx=c;
+    drawHamletPortrait(150,220,4.1,act);
+    ctx=saved;
+  } else {
+    c.translate(150,132); c.scale(1.28,1.28); drawVectorHamletPortrait(c, act, gold, doom);
+  }
+  c.restore();
+}
 function tickStory(){
   updateStoryFx();
+  renderStoryPortrait();
   if(storyComplete) return;
   storyLineTick++;
   if(storyLineTick>=STORY_LINE_DELAY){
@@ -2055,7 +2079,7 @@ function updateStoryFx(){
   drawStoryParticles(c, act);
   drawStorySilhouette(c, W-148, H-36, 4.15, act, 'rightHamlet', true);
 }
-function clearStoryFx(){ if(storyFxCtx) storyFxCtx.clearRect(0,0,W,H); storyParticles=[]; }
+function clearStoryFx(){ if(storyFxCtx) storyFxCtx.clearRect(0,0,W,H); if(storyPortraitCtx && dom.storyPortrait) storyPortraitCtx.clearRect(0,0,dom.storyPortrait.width,dom.storyPortrait.height); storyParticles=[]; }
 function activeStorySide(){ const pc=storyPieces[Math.max(0, Math.min(storyLineIdx-1, storyPieces.length-1))]; return pc && pc.speak ? 'right' : 'left'; }
 function drawStoryParticles(c, act){
   for(let i=0;i<storyParticles.length;i++){
@@ -3798,7 +3822,8 @@ function drawPlayerWorld(){
 }
 function drawPlayerNickname(p){
   const nickname=getPlayerNickname();
-  if(!nickname || (typeof Dialog!=='undefined' && Dialog.isActive())) return;
+  const dlgActive = (dom.dlgLeft && dom.dlgLeft.classList.contains('show')) || (dom.dlgRight && dom.dlgRight.classList.contains('show'));
+  if(!nickname || dlgActive) return;
   ctx.save();
   ctx.font='bold 12px "Courier New","Songti SC",monospace';
   ctx.textAlign='center';
