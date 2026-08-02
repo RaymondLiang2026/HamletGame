@@ -69,6 +69,7 @@ let jumpEdge=false, atkEdge=false, rangedEdge=false; // 上升沿检测
 window.addEventListener('keydown', e=>{
   const k = KEYMAP[e.code];
   if(k){
+    dismissBossGuide();
     if(!keys[k]){
       if(k==='jump') jumpEdge=true;
       if(k==='atk') atkEdge=true;
@@ -292,7 +293,7 @@ const dom = {
   scorePanel:$('scorePanel'), scoreVal:$('scoreVal'), combo:$('combo'),
   muteBtn:$('muteBtn'), ctrlHint:$('ctrlHint'), hintRanged:$('hintRanged'), hintLock:$('hintLock'),
   levelName:$('levelName'),
-  dlgBar:$('dlgBar'), dlgLeft:$('dlgLeft'), dlgRight:$('dlgRight'),
+  dlgBar:$('dlgBar'), dlgLeft:$('dlgLeft'), dlgRight:$('dlgRight'), bossGuide:$('bossGuide'),
   storyScreen:$('storyScreen'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'),
   skipBtn:$('skipBtn'), storyBtn:$('storyBtn'),
   titleScreen:$('titleScreen'), startBtn:$('startBtn'),
@@ -302,6 +303,20 @@ const dom = {
 };
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
+let bossGuideTimer=null;
+function showBossGuide(){
+  if(actIndex!==ACT_CASTLE || !dom.bossGuide) return;
+  clearTimeout(bossGuideTimer);
+  show(dom.bossGuide);
+  requestAnimationFrame(()=>dom.bossGuide.classList.add('show'));
+  bossGuideTimer=setTimeout(dismissBossGuide, 5000);
+}
+function dismissBossGuide(){
+  if(!dom || !dom.bossGuide || dom.bossGuide.classList.contains('hidden')) return;
+  clearTimeout(bossGuideTimer); bossGuideTimer=null;
+  dom.bossGuide.classList.remove('show');
+  setTimeout(()=>{ if(dom.bossGuide && !dom.bossGuide.classList.contains('show')) hide(dom.bossGuide); }, 360);
+}
 
 function addScore(n, tag){
   score += n;
@@ -2343,6 +2358,7 @@ function updateTriggersAndCheckpoints(){
     Sound.pickup(); flash('rgba(150,120,220,0.3)',12);
     for(let i=0;i<20;i++) burst(level.bowPickup.x+17, level.bowPickup.y+17, '#c9a6ff',1,4);
     addFloater(level.bowPickup.x+17, level.bowPickup.y-10, '获得【亡魂之弓】! 远程攻击已解锁 [F]', '#c9a6ff', 15);
+    addFloater(player.x+player.w/2, player.y-52, '按 F 或 Z 键可发射远程箭矢', '#e6d0ff', 14);
     showStory([{act:'ACT III · 亡魂之弓', title:'先王的馈赠', portrait:2, lines:[
       { zh:'一柄泛着幽光的弓自石台升起——【亡魂之弓】。' },
       { zh:'哈姆雷特：“亡魂相助，让复仇之矢，穿透一切阻碍。”', speak:true },
@@ -2407,7 +2423,11 @@ function startBoss(entry){
   if(entry.final) mus = opheliaSaved?'hero':'boss';
   Sound.setMusic(mus, 1.1);
   const intro = BOSS_INTRO[entry.kind] || [];
-  showStory(intro, ()=>{ state=STATE.PLAY; addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · '+D.name, ACTS[actIndex].accent||'#e8c25a', 16); });
+  showStory(intro, ()=>{
+    state=STATE.PLAY;
+    addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · '+D.name, ACTS[actIndex].accent||'#e8c25a', 16);
+    showBossGuide();
+  });
 }
 // Boss 计划驱动：所有含 level.bossPlan 的关卡通用（城堡/宫廷/英格兰关底 + 终章雷欧提斯&克劳迪奥）
 function updateBossPlan(){
@@ -2599,6 +2619,7 @@ function respawnAtCheckpoint(){
   hide(dom.loseScreen);
   // Boss 战失败：重置 Boss，并允许玩家从 Boss 战前检查点重新触发本轮 Boss
   if(boss){ boss=null; bossStarted=false; bossUltTimer=0;
+    dismissBossGuide();
     if(activeBossEntry){ activeBossEntry.started=false; }
     activeBossEntry=null;
     // 清除 boss 阶段生成的毒池
