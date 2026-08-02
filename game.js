@@ -45,6 +45,24 @@ let ghostOpheliaFinale = false;      // 生还线最终战：亡魂奥菲莉亚�
 let finalLightning = { next:0, flashes:0, nextFlash:0, boltUntil:0, segs:[] };
 let finalBossEntryFrame = -1;        // 克劳迪奥进场暗化特效起始 frame，-1 表示未触发
 
+/* --- 第四幕「船舱战斗区」子状态 + 船只摇晃（全部严格 ACT_ENGLAND / cabin guard，绝不影响其它幕） --- */
+let cabinActive=false;               // 是否正处于船舱场景（此时 level 已切换为 cabinLevel）
+let cabinPhase=null;                 // null|'opening'|'toCabin'|'inCabin'|'active'|'toDeck'|'inDeck'
+let cabinPhaseT=0;                   // 当前过场阶段计时（帧）
+let cabinFade=0;                     // 进/出船舱的画面淡黑遮罩 alpha 0..1
+let cabinLevel=null, deckLevel=null; // 船舱关卡对象 / 保存的甲板关卡对象引用
+let deckSnap=null;                   // 进舱前甲板实体快照（enemies/boss/相机等），返回时恢复
+let cabinReturn=null;                // 返回甲板时玩家坐标与朝向
+let cabinDoorTr=null;                // 触发进入的舱门 trigger（用于门开动画）
+let cabinCleared=false;              // 舱内战斗是否全部肃清（用于解锁甲板刺客队长 Boss）
+let cabinWave=0, cabinWaveState='idle', cabinWaveT=0;   // 波次索引 / 状态 / 计时
+let cabinPrompt=null;                // 常驻交互提示文案（靠近才显示、离开消失），每帧重置
+let playerSlowT=0;                   // 舷窗水柱命中后的减速 debuff 帧数
+/* --- 船体摇晃（仅第四幕、仅作用于玩家；舱内与其它幕均为 0） --- */
+let shipRock=true;                   // 船体摇晃总开关
+let rockAngle=0;                     // 当前帧船体倾斜角（rad），驱动整屏视觉倾斜
+let rockOffset=0;                    // 当前帧船体像素级偏移，用于背景/甲板视觉呼应
+
 /* -------------------------------------------------------------------------
    1. 工具函数
    ------------------------------------------------------------------------- */
@@ -1365,9 +1383,15 @@ function drawWeatherParticles(){
    ------------------------------------------------------------------------- */
 function drawBackground(){
   const theme = ACTS[actIndex].theme;
+  // 第四幕船舱战斗区：昏暗压迫的铆钉金属舱室（铆钉壁纹/舷窗蓝光/摇摆吊灯光锥），最华丽配置
+  if(cabinActive){ drawCabinBackground(frame); return; }
   // 第四幕 英格兰：专用精细化海景（天空/月光/云层/三层波浪/倒影/帆船/灯塔/前景岩礁）
   if(actIndex===ACT_ENGLAND){
+    // 船体摇晃像素级视觉呼应：整体海景随 rockOffset 轻微上下浮动
+    ctx.save();
+    ctx.translate(0, rockOffset);
     drawEnglandBackground(frame);
+    ctx.restore();
     drawSceneDecorations();
     drawWeatherParticles();
     drawAmbientBg();
@@ -1431,9 +1455,15 @@ function drawFarLayerFx(){
       ctx.lineTo(bx+W,H); ctx.closePath(); ctx.fill(); }
     ctx.restore();
   } else if(actIndex===ACT_FINAL){
-    // 第五幕远景：城堡废墟轮廓（断裂塔楼）
+    // 第五幕远景：多层天空云带 + 极远残破城墙 + 远景城堡废墟（断裂塔楼）
+    drawFinalCloudBands();
+    // 极远层（视差 0.12，更暗更矮的残破城墙轮廓）
+    const offF=parallaxOff(0.12,300); ctx.save(); ctx.fillStyle=darkMode?'#0f0714':'#140d1b';
+    for(let bx=-offF-300; bx<W+300; bx+=300) drawRuinedRampart(bx, H*0.44);
+    ctx.restore();
+    // 远景城堡废墟（原层，视差 0.2）
     const off=parallaxOff(0.2,360); ctx.save(); ctx.fillStyle=darkMode?'#160b1c':'#1c1424';
-    for(let bx=-off-360; bx<W+360; bx+=360) drawRuinSilhouette(bx, H*0.5);
+    for(let bx=-off-360; bx<W+360; bx+=360){ drawRuinSilhouetteFar(bx, H*0.46); drawRuinSilhouette(bx, H*0.5); }
     ctx.restore();
   }
 }
@@ -1491,7 +1521,20 @@ function drawSceneDecorations(){
     ctx.save(); ctx.fillStyle=darkMode?'rgba(30,20,40,0.9)':'rgba(46,36,58,0.9)';
     for(let i=0;i<26;i++){ const rx=(i*74 - nearOff%74*3 + i*13)%(W+80)-40; const ry=H*0.86+hnoise(i)*40; const s=3+hnoise(i+9)*7;
       ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.6); ctx.lineTo(rx+s*1.8,ry); ctx.lineTo(rx+s*0.9,ry+s*0.5); ctx.closePath(); ctx.fill(); }
+    // 额外更多碎石（第二组，不同分布密度）
+    for(let i=0;i<26;i++){ const rx=(i*91 - nearOff%91*2 + i*7 + 37)%(W+80)-40; const ry=H*0.83+hnoise(i+40)*46; const s=2+hnoise(i+51)*5;
+      ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.5); ctx.lineTo(rx+s*1.6,ry); ctx.lineTo(rx+s*0.8,ry+s*0.5); ctx.closePath(); ctx.fill(); }
     ctx.restore();
+    // 7 根断裂石柱（近景，视差 0.8，确定性外观）
+    for(let i=0;i<7;i++){ const cx=(i*196 - (nearOff%196)*2 + i*31)%(W+180)-90; const cy=H*0.82+hnoise(i*3)*22; drawBrokenColumn(cx, cy, i%3, i); }
+    // 8 处破碎盔甲 / 折断武器散落
+    for(let i=0;i<8;i++){ const ax=(i*158 - (nearOff%158)*3 + i*19 + 60)%(W+120)-60; const ay=H*0.86+hnoise(i+17)*34; drawArmorDebris(ax, ay, i); }
+    // 熔岩裂缝地面（阶段三更亮更密）
+    const ph3dec = boss && boss.kind==='claudius' && boss.phase>=3;
+    drawLavaCrackGround(nearOff, ph3dec);
+    // 2 处燃烧的破旗残骸
+    drawBurningFlag((W*0.24 - (camX*0.8)%420 + 420)%(W+200)-100, H*0.88, frame*0.05);
+    drawBurningFlag((W*0.72 - (camX*0.8)%520 + 520)%(W+200)-100, H*0.9, frame*0.05+2.2);
   }
 }
 function drawWallTorch(x,y,t){
@@ -1695,13 +1738,24 @@ function drawAmbientBg(){
    ============================================================ */
 // 第五幕：Boss<30% 血量时天空渐染暗红（背景阶段调用）
 function drawFinalSkyTint(){
-  if(actIndex!==ACT_FINAL || !(boss && boss.kind==='claudius' && !boss.dead)) return;
-  const ratio=boss.hp/boss.maxHp; if(ratio>=0.3) return;
-  const k=clamp((0.3-ratio)/0.3,0,1)*(0.85+0.15*Math.sin(frame*0.08));
+  if(actIndex!==ACT_FINAL || !(boss && boss.kind==='claudius' && (!boss.dead || boss.deathT>0))) return;
+  const ratio=boss.hp/boss.maxHp;
+  const ph3=boss.phase>=3;
+  // 阶段三：无视血量强制深红/黑红压顶；否则仅血量<30% 时渐显
+  let k;
+  if(ph3) k=(0.88+0.12*Math.sin(frame*0.1));
+  else { if(ratio>=0.3) return; k=clamp((0.3-ratio)/0.3,0,1)*(0.85+0.15*Math.sin(frame*0.08)); }
+  if(bossRageT>0) k=Math.min(1.25, k+ (bossRageT/90)*0.4);   // 阶段切换瞬间进一步加深
   const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'rgba(96,12,18,'+(0.42*k).toFixed(3)+')');
-  g.addColorStop(0.5,'rgba(56,8,16,'+(0.30*k).toFixed(3)+')');
-  g.addColorStop(1,'rgba(20,2,8,'+(0.14*k).toFixed(3)+')');
+  if(ph3){
+    g.addColorStop(0,'rgba(120,8,14,'+(0.52*k).toFixed(3)+')');
+    g.addColorStop(0.5,'rgba(64,4,12,'+(0.40*k).toFixed(3)+')');
+    g.addColorStop(1,'rgba(10,0,4,'+(0.26*k).toFixed(3)+')');
+  } else {
+    g.addColorStop(0,'rgba(96,12,18,'+(0.42*k).toFixed(3)+')');
+    g.addColorStop(0.5,'rgba(56,8,16,'+(0.30*k).toFixed(3)+')');
+    g.addColorStop(1,'rgba(20,2,8,'+(0.14*k).toFixed(3)+')');
+  }
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
 }
 // 第一幕：云层缓慢遮月，制造冷月闪烁
@@ -1741,6 +1795,110 @@ function drawBrokenWall(bx,y){
   ctx.fillRect(colx, y-46, 16, H-(y-46));
   ctx.fillRect(colx-5, y-46, 26, 6);
   ctx.save(); ctx.translate(colx+8,y-52); ctx.rotate(0.32); ctx.fillRect(-9,-8,18,14); ctx.restore();
+}
+// 第五幕极远层：更矮更破的城墙轮廓（period 300）
+function drawRuinedRampart(bx,y){
+  ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(bx,y+20);
+  for(let x=0;x<=300;x+=30){ const n=hnoise(((bx+x)/30|0)&255); const top=y+20-n*36-(x%60===0?18:0); ctx.lineTo(bx+x, top); if(x%60===0){ ctx.lineTo(bx+x+14, top); ctx.lineTo(bx+x+14, top+10); ctx.lineTo(bx+x+30, top+10);} }
+  ctx.lineTo(bx+300,H); ctx.closePath(); ctx.fill();
+}
+// 第五幕远景更远处的城堡废墟剪影（比主废墟更瘦更尖，period 360）
+function drawRuinSilhouetteFar(bx, baseY){
+  ctx.beginPath();
+  ctx.moveTo(bx,H); ctx.lineTo(bx,baseY+40);
+  ctx.lineTo(bx+40,baseY+40); ctx.lineTo(bx+40,baseY-28); ctx.lineTo(bx+58,baseY-46); ctx.lineTo(bx+76,baseY-28); ctx.lineTo(bx+76,baseY+8);
+  ctx.lineTo(bx+140,baseY+8); ctx.lineTo(bx+150,baseY-20); ctx.lineTo(bx+160,baseY+8);
+  ctx.lineTo(bx+210,baseY+8); ctx.lineTo(bx+210,baseY-58); ctx.lineTo(bx+228,baseY-72); ctx.lineTo(bx+246,baseY-58); ctx.lineTo(bx+246,baseY+20);
+  ctx.lineTo(bx+300,baseY+20); ctx.lineTo(bx+312,baseY-14); ctx.lineTo(bx+324,baseY+20);
+  ctx.lineTo(bx+360,baseY+20); ctx.lineTo(bx+360,H);
+  ctx.closePath(); ctx.fill();
+}
+// 第五幕天空：多层缓动云带（三层不同速度/高度/透明度，压迫风暴天）
+function drawFinalCloudBands(){
+  ctx.save();
+  const doom = (typeof opheliaSaved!=='undefined') && !opheliaSaved;
+  const bands=[ {y:H*0.10,h:34,sp:0.22,a:0.30,col:doom?'40,26,58':'34,40,66'},
+                {y:H*0.20,h:28,sp:0.36,a:0.24,col:doom?'52,30,64':'40,48,74'},
+                {y:H*0.30,h:22,sp:0.52,a:0.18,col:doom?'64,36,72':'48,56,84'} ];
+  for(let bi=0;bi<bands.length;bi++){ const bd=bands[bi];
+    for(let c=0;c<6;c++){ const seed=bi*97+c*53; const x=((frame*bd.sp + c*(W/5+40) + seed*7)%(W+320))-160; const y=bd.y+((seed%7)-3)*4;
+      const rw=90+ (seed%5)*22, rh=bd.h;
+      const g=ctx.createRadialGradient(x,y,4,x,y,rw); g.addColorStop(0,'rgba('+bd.col+','+bd.a.toFixed(3)+')'); g.addColorStop(1,'rgba('+bd.col+',0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(x,y,rw,rh,0,0,6.283); ctx.fill(); }
+  }
+  ctx.restore();
+}
+// 第五幕近景：断裂石柱（type 0 直立残柱 / 1 斜倒柱 / 2 柱础带断块），确定性外观
+function drawBrokenColumn(x,y,type,i){
+  ctx.save();
+  const col=darkMode?'#241634':'#2c2440', edge=darkMode?'#160c22':'#1c1630';
+  const h=60+hnoise(i*5)*70, w=16+hnoise(i*5+2)*8;
+  if(type===1){ // 斜倒断柱
+    ctx.translate(x,y); ctx.rotate(-0.5-hnoise(i)*0.3);
+    ctx.fillStyle=col; ctx.fillRect(0,-w/2,h,w);
+    ctx.fillStyle=edge; for(let s=1;s<4;s++) ctx.fillRect(s*h/4,-w/2,2,w);
+    ctx.fillStyle=col; ctx.fillRect(-6,-w/2-4,10,w+8);
+  } else if(type===2){ // 柱础 + 散落断块
+    ctx.fillStyle=col; ctx.fillRect(x-w,y-10,w*2,12); ctx.fillRect(x-w*0.7,y-24,w*1.4,16);
+    ctx.fillStyle=edge; ctx.fillRect(x-w,y-2,w*2,3);
+    ctx.save(); ctx.translate(x+w*1.3,y-6); ctx.rotate(0.4+hnoise(i+3)); ctx.fillStyle=col; ctx.fillRect(-8,-6,16,12); ctx.restore();
+  } else { // 直立残柱（顶部断裂）
+    ctx.fillStyle=col; ctx.fillRect(x-w/2,y-h,w,h);
+    ctx.fillStyle=edge; for(let s=1;s<5;s++) ctx.fillRect(x-w/2, y-h+s*h/5, w, 2);
+    ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(x-w/2,y-h); ctx.lineTo(x-w/2+4,y-h-8+hnoise(i+1)*6); ctx.lineTo(x+2,y-h-2); ctx.lineTo(x+w/2,y-h-9+hnoise(i+2)*6); ctx.lineTo(x+w/2,y-h); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=darkMode?'#3a2a52':'#42385a'; ctx.fillRect(x-w/2-4,y-h+2,w+8,4);
+  }
+  ctx.restore();
+}
+// 第五幕近景：散落的破碎盔甲 / 折断武器（确定性外观）
+function drawArmorDebris(x,y,i){
+  ctx.save(); ctx.translate(x,y);
+  const t=i%3, met=darkMode?'#4a4356':'#5a5468', dk=darkMode?'#2a2436':'#332d42';
+  if(t===0){ // 破头盔
+    ctx.fillStyle=met; ctx.beginPath(); ctx.arc(0,0,9,Math.PI,0); ctx.fill(); ctx.fillRect(-9,0,18,3);
+    ctx.fillStyle=dk; ctx.fillRect(-2,-8,4,8);
+  } else if(t===1){ // 折断的剑
+    ctx.rotate(0.5+hnoise(i)*0.6); ctx.fillStyle=met; ctx.fillRect(0,-2,26,4); ctx.fillStyle=dk; ctx.fillRect(-8,-3,8,6); ctx.fillRect(-3,-6,3,12);
+  } else { // 破盾
+    ctx.rotate(-0.3-hnoise(i)*0.4); ctx.fillStyle=dk; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(11,-6); ctx.lineTo(9,10); ctx.lineTo(0,16); ctx.lineTo(-9,10); ctx.lineTo(-11,-6); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=met; ctx.lineWidth=1.5; ctx.stroke();
+  }
+  ctx.restore();
+}
+// 第五幕近景地面：熔岩裂缝（脉动发光，ph3 更亮更密）
+function drawLavaCrackGround(nearOff, ph3){
+  ctx.save(); ctx.lineCap='round';
+  const pulse=0.5+0.5*Math.sin(frame*0.1);
+  const cnt=ph3?9:5;
+  ctx.shadowColor='rgba(255,90,20,0.9)'; ctx.shadowBlur=(ph3?16:10)*pulse+4;
+  for(let i=0;i<cnt;i++){ const cx=((i*173 - (nearOff%97)*2 + i*29)%(W+120))-60; const baseY=H*0.9+hnoise(i+2)*28;
+    const g=ph3?(0.5+0.4*pulse):(0.3+0.3*pulse);
+    ctx.strokeStyle='rgba(255,'+((80+60*pulse)|0)+',26,'+g.toFixed(3)+')'; ctx.lineWidth=(ph3?2.2:1.5)+pulse*1.6;
+    ctx.beginPath(); ctx.moveTo(cx,baseY);
+    for(let j=1;j<=5;j++){ const x=cx+(hnoise(i*7+j)-0.5)*60, y=baseY-j*10; ctx.lineTo(x,y); }
+    ctx.stroke();
+  }
+  ctx.shadowBlur=0; ctx.restore();
+}
+// 第五幕近景：燃烧的破旗残骸（旗杆 + 撕裂布面 + 火焰/火星）
+function drawBurningFlag(x,y,t){
+  ctx.save();
+  ctx.strokeStyle=darkMode?'#1c1424':'#241a30'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y-58); ctx.stroke();
+  // 撕裂旗面
+  const sway=Math.sin(t)*5;
+  ctx.fillStyle=darkMode?'rgba(90,20,28,0.9)':'rgba(110,26,34,0.9)';
+  ctx.beginPath(); ctx.moveTo(x,y-56);
+  ctx.lineTo(x+34+sway,y-50); ctx.lineTo(x+22,y-42); ctx.lineTo(x+36+sway,y-34);
+  ctx.lineTo(x+18,y-30); ctx.lineTo(x+28+sway,y-22); ctx.lineTo(x,y-24); ctx.closePath(); ctx.fill();
+  // 火焰
+  for(let f=0;f<4;f++){ const fx=x+8+f*8+Math.sin(t*3+f)*3, fy=y-30-f*6; const fl=6+Math.sin(t*6+f)*3;
+    const g=ctx.createRadialGradient(fx,fy,1,fx,fy,fl+4); g.addColorStop(0,'rgba(255,230,120,0.9)'); g.addColorStop(0.5,'rgba(255,90,30,0.6)'); g.addColorStop(1,'rgba(255,60,20,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(fx,fy,fl+4,0,6.283); ctx.fill(); }
+  // 火星
+  ctx.fillStyle='rgba(255,180,80,0.85)';
+  for(let s=0;s<5;s++){ const sp=(t*40+s*30)%80; ctx.fillRect(x+10+Math.sin(t*2+s)*10, y-30-sp, 2, 2); }
+  ctx.restore();
 }
 // 第一幕城垛上的三角旗帜（随风摆动）
 function drawParapetFlag(x,y,t){
@@ -2940,16 +3098,29 @@ function drawTrigger(tr){
     ctx.fillText('↑攀爬', tr.x+tr.w/2, tr.y-6);
     ctx.restore();
   } else if(tr.type==='door'){
-    // 舱门：木门 + 拱顶 + 门环
+    // 舱门：木门 + 拱顶 + 门环；_open(0..1) 时门板向内旋开
     ctx.save();
-    ctx.fillStyle='#3b2416'; ctx.fillRect(tr.x, tr.y, tr.w, tr.h);
-    ctx.fillStyle='#5e3d22'; ctx.fillRect(tr.x+2, tr.y+2, tr.w-4, tr.h-4);
+    const op = tr._open||0;
+    // 门框 / 门洞（门开时露出内部幽暗）
+    ctx.fillStyle='#241a12'; ctx.fillRect(tr.x-2, tr.y-2, tr.w+4, tr.h+4);
+    if(op>0){ const g=ctx.createLinearGradient(tr.x,tr.y,tr.x,tr.y+tr.h); g.addColorStop(0,'rgba(30,40,46,0.9)'); g.addColorStop(1,'rgba(6,10,14,0.98)'); ctx.fillStyle=g; ctx.fillRect(tr.x,tr.y,tr.w,tr.h);
+      // 内部溢出的冷光
+      ctx.fillStyle='rgba(120,180,200,'+(0.10+0.08*Math.sin(frame*0.2))+')'; ctx.fillRect(tr.x+2,tr.y+2,tr.w-4,tr.h-4); }
+    // 门板：以左侧铰链为轴，透视压缩宽度模拟旋开
+    ctx.save();
+    ctx.translate(tr.x, tr.y);
+    const persp = 1 - op*0.82;            // 门板可见宽度随开度收缩
+    ctx.transform(persp,0, -op*0.34,1, 0,0);
+    ctx.fillStyle='#3b2416'; ctx.fillRect(0, 0, tr.w, tr.h);
+    ctx.fillStyle='#5e3d22'; ctx.fillRect(2, 2, tr.w-4, tr.h-4);
     ctx.strokeStyle='#2a1a0e'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(tr.x+tr.w/2, tr.y+3); ctx.lineTo(tr.x+tr.w/2, tr.y+tr.h-3); ctx.stroke();
-    ctx.fillStyle='#c9a24a'; ctx.beginPath(); ctx.arc(tr.x+tr.w/2, tr.y+tr.h*0.5, 2.5, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(tr.w/2, 3); ctx.lineTo(tr.w/2, tr.h-3); ctx.stroke();
+    ctx.fillStyle='#c9a24a'; ctx.beginPath(); ctx.arc(tr.w-7, tr.h*0.5, 2.5, 0, 6.283); ctx.fill();
+    ctx.restore();
+    // 标签 / 提示（提示由 cabinPrompt 常驻绘制，这里只画门名）
     ctx.fillStyle='rgba(255,220,150,'+(0.4+0.25*Math.sin(frame*0.1))+')';
     ctx.font='bold 10px "Courier New",monospace'; ctx.textAlign='center';
-    ctx.fillText('舱门', tr.x+tr.w/2, tr.y-4);
+    ctx.fillText(cabinCleared?'舱门（已肃清）':'舱门', tr.x+tr.w/2, tr.y-4);
     ctx.restore();
   } else if(tr.type==='peak'){
     if(tr.fired) return;
@@ -3169,7 +3340,8 @@ function makeEnemy(type, x, y, opts){
     facing:-1, onGround:false, hitFlash:0, dying:false, deathT:0, invuln:0,
     atkT:0, atkCd:0, aimT:0, shootCd:randi(60,120), state:'patrol', seed:randi(0,999),
     patrolMin:x-rand(60,140), patrolMax:x+rand(60,140), jumpCd:0,
-    shieldUp:type==='shield', shieldBroken:false, elite:type==='elite'
+    shieldUp:type==='shield', shieldBroken:false, elite:type==='elite',
+    ignoreShipTilt:true   // 船只摇晃力只作用于玩家；敌兵/NPC 不受影响
   };
   e.maxHp=e.hp;
   if(opts&&opts.patrolMin!==undefined){ e.patrolMin=opts.patrolMin; e.patrolMax=opts.patrolMax; }
@@ -4399,6 +4571,11 @@ function loadLevel(idx, keepScore){
   respawn={x:level.playerStart.x, y:level.playerStart.y};
   checkpointActive=null; goalReached=false; deathFade=0; midFired={}; bowHintT=0;
   goalLocked=false;
+  // 第四幕船舱子状态复位（切换任意幕都彻底清零，绝不残留影响其它幕）
+  cabinActive=false; cabinPhase=null; cabinPhaseT=0; cabinFade=0;
+  rockAngle=0; rockOffset=0;
+  cabinLevel=null; deckLevel=null; deckSnap=null; cabinReturn=null; cabinDoorTr=null;
+  cabinCleared=false; cabinWave=0; cabinWaveState='idle'; cabinWaveT=0; cabinPrompt=null; playerSlowT=0;
   // 非阻断顶部对白栏：清空并压入本段开场台词
   Dialog.clear(); if(CHATTER[idx]) Dialog.push(CHATTER[idx]);
   // 分支相关的登场角色台词：终章若奥菲莉亚生还，她随侍在侧
@@ -4572,7 +4749,10 @@ function updatePlayer(){
   if(p.dead) return;
   let move=0;
   if(keys.left) move=-1; if(keys.right) move=1;
-  if(move){ p.facing=move; p.vx += move*(p.onGround?0.9:AIR_ACCEL); p.vx=clamp(p.vx,-MOVE_SPEED,MOVE_SPEED); }
+  // 舷窗水柱减速 debuff：临时降低移动速度与加速度（仅船舱内会被置位）
+  const slowed = playerSlowT>0;
+  const maxSpd = slowed ? MOVE_SPEED*0.45 : MOVE_SPEED;
+  if(move){ p.facing=move; p.vx += move*(p.onGround?0.9:AIR_ACCEL)*(slowed?0.5:1); p.vx=clamp(p.vx,-maxSpd,maxSpd); }
   else if(p.onGround){ p.vx*=FRICTION; if(Math.abs(p.vx)<0.15)p.vx=0; }
   // 跳跃（土狼时间 + 缓冲）
   if(p.onGround) p.coyote=6; else if(p.coyote>0) p.coyote--;
@@ -4596,6 +4776,21 @@ function updatePlayer(){
   if(p.invuln>0)p.invuln--; if(p.hurtT>0)p.hurtT--; if(p.ultActive>0)p.ultActive--;
   // 物理
   const solids=solidsList();
+  // 第四幕船只摇晃：仅对玩家施加正弦力（敌兵/NPC 不受影响；舱内与其它幕 rockAngle/rockOffset=0）
+  // 用户指定公式为唯一玩家摇晃力来源，旧 shipTiltParams 对 player 的 ax 施力已移除。
+  if(actIndex===ACT_ENGLAND && shipRock && !cabinActive){
+    // 大浪阶段（清舱后 Boss 战前）：振幅系数 ×1.5、频率 ×1.5
+    const surge = cabinCleared ? 1.5 : 1.0;
+    const f = frame * 0.015 * surge;
+    rockAngle = Math.sin(f) * 0.04 * surge;
+    const rockDir = 1;
+    p.vy += Math.cos(f) * 0.018 * surge * rockDir;
+    p.x  += Math.sin(f + 1) * 0.12 * surge;
+    rockOffset = Math.sin(f) * 6 * surge;
+  } else {
+    // 舱内或其它幕：不施力、无视觉倾斜
+    rockAngle = 0; rockOffset = 0;
+  }
   stepPhysics(p, solids);
   // 掉出世界底部
   if(p.y>level.height+40){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=60; return; } if(actIndex===3) drownPlayer(); else damagePlayer(30, p.x); if(!p.dead){ teleportPlayerToSafeRespawn('已传送回安全检查点'); } }
@@ -4618,7 +4813,14 @@ function checkHazards(){
   const body={x:p.x+3,y:p.y+4,w:p.w-6,h:p.h-8};
   for(const hz of level.hazards){
     if(hz.type==='water'){
-      if(rectsOverlap(feet,hz)){ if(actIndex===3){ drownPlayer(); } else { damagePlayer(20,hz.x+hz.w/2); if(!p.dead){ p.vy=-6; teleportPlayerToSafeRespawn('已传送回安全检查点'); } } return; }
+      if(rectsOverlap(feet,hz)){
+        if(actIndex===3){ drownPlayer(); }
+        else if(cabinActive){ // 船舱活板门下的海水：大额掉血 + 溅起水花 + 传送回舱口
+          for(let i=0;i<12;i++) ripple(p.x+rand(-14,14), GROUND_TOP+rand(0,14));
+          burst(p.x+p.w/2, GROUND_TOP+8, 'rgba(150,200,235,0.85)', 14, 5);
+          damagePlayer(45, hz.x+hz.w/2); if(!p.dead){ p.vy=-6; teleportPlayerToSafeRespawn('落入海水！传送回舱口'); }
+        }
+        else { damagePlayer(20,hz.x+hz.w/2); if(!p.dead){ p.vy=-6; teleportPlayerToSafeRespawn('已传送回安全检查点'); } } return; }
     } else if(hz.type==='spike'){
       if(rectsOverlap(feet,hz)){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=50; addFloater(p.x+p.w/2,p.y-16,'死亡次数 '+level.deaths,'#ff8a8a',13); return; } damagePlayer(14, p.x+ (p.x<hz.x+hz.w/2? -20:20)); if(!p.dead){ p.vy=-7; } return; }
     } else if(hz.type==='poison'){
@@ -4833,14 +5035,419 @@ function fireTrigger(tr){
   } else if(tr.type==='peak'){ // 城垛之巅：俯瞰提示（登顶一次）
     addFloater(player.x+player.w/2, player.y-40, '登上城垛之巅 · 俯瞰全城 Elsinore', '#ffe6a0', 15);
     Sound.checkpoint();
-  } else if(tr.type==='door'){ // 船舱门：进入小战斗区提示（首次）
-    if(!tr._announced){ tr._announced=true;
-      addFloater(player.x+player.w/2, player.y-40, '推开舱门 · 进入船舱战斗区！', '#ffe0b0', 15);
-      Sound.blip(520,.12,'square',.2);
-    }
+  } else if(tr.type==='door'){ // 船舱门：进入交互改由靠近 + ↑ 处理（updateCabinDeckPrompt），此处仅保持持续绘制
     tr.fired=false; // persist 门体持续绘制
   }
 }
+
+/* =========================================================================
+   第四幕「船舱战斗区」子系统 —— 玩法 / 陷阱 / 华丽视觉 / 船只摇晃
+   全部以 ACT_ENGLAND / cabinActive / cabinPhase 严格 guard，绝不触碰其它幕。
+   ========================================================================= */
+// 船只摇晃参数：仅第四幕生效；舱内 tilt=0；大浪阶段（清舱后 Boss 前）幅度加大、周期缩短。
+function shipTiltParams(){
+  if(actIndex!==ACT_ENGLAND || cabinActive) return {amp:0, period:180};
+  if(cabinCleared) return {amp:0.06, period:120};   // 大浪阶段：±0.06 rad，周期 2s
+  return {amp:0.035, period:180};                   // 常规颠簸：±0.035 rad，周期 3s
+}
+// 波次配置（越后波越强：patrol→skeleton/archer→shield→shield/elite）
+const CABIN_WAVES = [
+  [{type:'patrol',x:300},{type:'patrol',x:600}],
+  [{type:'skeleton',x:260},{type:'patrol',x:470},{type:'archer',x:700}],
+  [{type:'shield',x:300},{type:'archer',x:680},{type:'skeleton',x:470}],
+  [{type:'shield',x:280},{type:'shield',x:700},{type:'elite',x:470}]
+];
+function findCabinDoor(){
+  if(!level||!level.triggers) return null;
+  for(const tr of level.triggers){ if(tr.type==='door') return tr; }
+  return null;
+}
+// 甲板：靠近舱门显示提示，按 ↑ 进入；返回 true 表示本帧开始进舱
+function updateCabinDeckPrompt(){
+  const tr=findCabinDoor();
+  if(tr){
+    const near = Math.abs((player.x+player.w/2)-(tr.x+tr.w/2))<64 && Math.abs((player.y+player.h/2)-(tr.y+tr.h/2))<98;
+    if(near){
+      if(!cabinCleared){
+        cabinPrompt='↑ 进入舱门';
+        if(jumpEdge && player.onGround){ jumpEdge=false; startCabinEnter(tr); return true; }
+      } else {
+        cabinPrompt='舱室已肃清 · 甲板刺客队长现身';
+      }
+    }
+  }
+  // 未清舱却逼近 Boss 区：提示先去船舱（避免误以为主线卡死）
+  if(!cabinCleared && level.bossArena && player.x+player.w > level.bossArena.x-260 && player.x < level.bossArena.x+60){
+    cabinPrompt='刺客队长尚未现身——先潜入船舱肃清伏兵';
+  }
+  return false;
+}
+function startCabinEnter(tr){
+  cabinDoorTr=tr; if(tr) tr._open=0;
+  cabinReturn={x:player.x, y:player.y, facing:player.facing};
+  cabinPhase='opening'; cabinPhaseT=0;
+  player.vx=0; player.vy=0;
+  Sound.blip(300,.2,'square',.24); Sound.noise(.35,.14,0,460);
+  addScreenFloater(W/2,150,'推开舱门 · 潜入船舱','#ffe0b0',15,80);
+}
+function startCabinExit(){ cabinPhase='toDeck'; cabinPhaseT=0; player.vx=0; player.vy=0; Sound.blip(300,.2,'square',.22); }
+// 过场状态机（开门→淡黑→切场→淡入→战斗；返回同理）
+function updateCabinTransition(){
+  cabinPhaseT++;
+  const DOOR_T=42, FADE_T=22;
+  if(cabinPhase==='opening'){
+    if(cabinDoorTr) cabinDoorTr._open=Math.min(1, cabinPhaseT/DOOR_T);
+    if(cabinPhaseT>=DOOR_T){ cabinPhase='toCabin'; cabinPhaseT=0; }
+  } else if(cabinPhase==='toCabin'){
+    cabinFade=Math.min(1, cabinPhaseT/FADE_T);
+    if(cabinFade>=1){ enterCabinScene(); cabinPhase='inCabin'; cabinPhaseT=0; }
+  } else if(cabinPhase==='inCabin'){
+    cabinFade=Math.max(0, 1-cabinPhaseT/FADE_T);
+    if(cabinFade<=0){ cabinFade=0; cabinPhase='active'; cabinPhaseT=0; startCabinWave(0); }
+  } else if(cabinPhase==='toDeck'){
+    cabinFade=Math.min(1, cabinPhaseT/FADE_T);
+    if(cabinFade>=1){ exitCabinScene(); cabinPhase='inDeck'; cabinPhaseT=0; }
+  } else if(cabinPhase==='inDeck'){
+    cabinFade=Math.max(0, 1-cabinPhaseT/FADE_T);
+    if(cabinFade<=0){ cabinFade=0; cabinPhase=null; cabinPhaseT=0; }
+  }
+}
+function enterCabinScene(){
+  deckLevel=level;
+  // 快照甲板实体，返回时原样恢复（不重建关卡，保留击杀/宝箱/位置进度）
+  deckSnap={ enemies, projectiles, rocks, boss, bossStarted, activeBossEntry, respawn };
+  if(!cabinLevel) cabinLevel=buildCabinLevel();
+  cabinResetTraps();
+  level=cabinLevel; cabinActive=true;
+  enemies=[]; projectiles=[]; rocks=[]; boss=null; bossStarted=false; activeBossEntry=null;
+  player.x=cabinLevel.playerStart.x; player.y=cabinLevel.playerStart.y-PLAYER_H;
+  player.vx=0; player.vy=0; player.invuln=60; player.facing=1;
+  respawn={x:cabinLevel.playerStart.x, y:cabinLevel.playerStart.y};
+  camX=clamp(player.x-VW/2, 0, cabinLevel.width-VW); camY=clamp(player.y-VH*0.55, 0, cabinLevel.height-VH);
+  cabinWave=0; cabinWaveState='idle'; playerSlowT=0;
+  if(dom.levelLabel) dom.levelLabel.textContent='英格兰流亡 · 船舱战斗区';
+  Sound.setMusic('england', .95);
+}
+function exitCabinScene(){
+  level=deckLevel; cabinActive=false;
+  if(deckSnap){ enemies=deckSnap.enemies; projectiles=deckSnap.projectiles; rocks=deckSnap.rocks;
+    boss=deckSnap.boss; bossStarted=deckSnap.bossStarted; activeBossEntry=deckSnap.activeBossEntry; respawn=deckSnap.respawn; }
+  const rx=cabinReturn?cabinReturn.x:(deckLevel.playerStart.x), ry=cabinReturn?cabinReturn.y:(deckLevel.playerStart.y-PLAYER_H);
+  player.x=rx; player.y=ry; player.vx=0; player.vy=0; player.invuln=60; player.facing=1;
+  camX=clamp(player.x-VW/2, 0, level.width-VW); camY=clamp(player.y-VH*0.55, 0, level.height-VH);
+  playerSlowT=0;
+  if(dom.levelLabel) dom.levelLabel.textContent=ACTS[ACT_ENGLAND].name;
+  Sound.setMusic('england', 1);
+  addScreenFloater(W/2,150, cabinCleared?'船舱肃清 · 返回甲板，刺客队长现身！':'返回甲板','#ffe0b0',15,140);
+}
+// 构建独立船舱关卡（连续地面 + 两处活板门缺口 + 板条箱障碍 + 海水陷阱）
+function buildCabinLevel(){
+  const width=960, floorH=LEVEL_H-GROUND_TOP;
+  const lv={ width, height:LEVEL_H, groundTop:GROUND_TOP,
+    platforms:[], hazards:[], movers:[], breakables:[], chests:[], enemySpawns:[],
+    checkpoints:[], triggers:[], pickups:[], rockEmitters:[], segments:[],
+    goalX:width-40, playerStart:{x:64,y:GROUND_TOP}, exitX:916, isCabin:true, completeMode:'none' };
+  // 活板门缺口范围
+  const traps=[ {x:316,w:88}, {x:560,w:88} ];
+  // 连续地面（在活板门处留缺口，缺口由可开合的门板填补）
+  let cur=0;
+  for(const t of traps){ if(t.x>cur) lv.platforms.push({x:cur, y:GROUND_TOP, w:t.x-cur, h:floorH, type:'ground'}); cur=t.x+t.w; }
+  if(cur<width) lv.platforms.push({x:cur, y:GROUND_TOP, w:width-cur, h:floorH, type:'ground'});
+  // 活板门门板（关闭时填补缺口成为可站立地面；开启时移出视野→掉入下方海水）
+  lv.trapdoors=[];
+  traps.forEach((t,i)=>{
+    const plank={x:t.x, y:GROUND_TOP, w:t.w, h:floorH, type:'ground', trapPlank:true};
+    lv.platforms.push(plank);
+    const water={x:t.x+4, y:GROUND_TOP+42, w:t.w-8, h:floorH-42, type:'water', _hidden:true};   // 缺口下方海水（关闭时隐藏）
+    lv.hazards.push(water);
+    lv.trapdoors.push({ x:t.x, w:t.w, plank, water, phase:(i*150)|0, period:300, openDur:96, warnLead:120, open:false, warn:false });
+  });
+  // 板条箱障碍（不规则 hnoise 布局，作为 solids 阻挡走位；控制在安全落脚区）
+  lv.crates=[];
+  const crateSpots=[190, 452, 704, 848];
+  crateSpots.forEach((bx,i)=>{
+    const s=24+((hnoise(i*7+3)*8)|0);
+    const cx=bx + (hnoise(i*5+1)*30-15);
+    const cr={x:cx, y:GROUND_TOP-s, w:s, h:s, tilt:(hnoise(i*3)*0.4-0.2)};
+    lv.crates.push(cr);
+    lv.platforms.push({x:cr.x, y:cr.y, w:cr.w, h:s, type:'ground', crate:true});
+  });
+  // 头顶压缩天花板（覆盖左/中区，逼玩家向右推进）
+  lv.ceiling={ x:88, w:452, h:36, restY:GROUND_TOP-262, lowY:GROUND_TOP-66, y:GROUND_TOP-262, phase:40, period:360, warnLead:66, descentT:96, hitCd:0, warn:false };
+  // 舷窗（可爆裂喷海水的三处）
+  lv.portholes=[ {x:210,y:GROUND_TOP-152,burstT:0,broken:false}, {x:486,y:GROUND_TOP-160,burstT:0,broken:false}, {x:770,y:GROUND_TOP-150,burstT:0,broken:false} ];
+  lv._portT=0;
+  return lv;
+}
+function cabinResetTraps(){
+  const lv=cabinLevel; if(!lv) return;
+  lv.trapdoors.forEach((t,i)=>{ t.phase=(i*150)|0; t.open=false; t.warn=false; t.plank.y=GROUND_TOP; if(t.water) t.water._hidden=true; });
+  if(lv.ceiling){ lv.ceiling.phase=40; lv.ceiling.y=lv.ceiling.restY; lv.ceiling.warn=false; lv.ceiling.hitCd=0; }
+  lv.portholes.forEach(p=>{ p.burstT=0; p.broken=false; }); lv._portT=0;
+}
+function startCabinWave(i){
+  cabinWave=i;
+  const spec=CABIN_WAVES[i];
+  for(const s of spec){
+    const e=makeEnemy(s.type, s.x, GROUND_TOP, {hpBonus:i});
+    e.ignoreShipTilt=true;
+    enemies.push(e);
+    // 入场烟雾爆破
+    burst(s.x, GROUND_TOP-18, '#39424a', 16, 4);
+    smoke(s.x, GROUND_TOP-22, 'rgba(90,104,116,0.6)'); smoke(s.x-6, GROUND_TOP-30, 'rgba(60,72,84,0.5)'); smoke(s.x+6, GROUND_TOP-26, 'rgba(70,82,96,0.5)');
+  }
+  Sound.blip(170,.14,'square',.2); Sound.noise(.22,.12,0,600);
+  cabinWaveState='fighting';
+  addScreenFloater(W/2,150,'第 '+(i+1)+' / '+CABIN_WAVES.length+' 波 · 雇佣刺客来袭','#ffcf9a',15,110);
+}
+function updateCabin(){
+  updateCabinTraps();
+  if(cabinWaveState==='fighting'){
+    if(!enemies.some(e=>!e.dying)){
+      cabinWaveState='cleared'; cabinWaveT=frame;
+      if(cabinWave+1<CABIN_WAVES.length) addScreenFloater(W/2,150,'本波肃清 · 准备迎战下一波','#c9e0a0',14,80);
+    }
+  } else if(cabinWaveState==='cleared'){
+    if(frame-cabinWaveT>96){
+      if(cabinWave+1<CABIN_WAVES.length) startCabinWave(cabinWave+1);
+      else { cabinWaveState='done'; cabinCleared=true;
+        addScreenFloater(W/2,150,'船舱肃清完毕！走到右侧舱口 ↑ 返回甲板','#ffe6a0',15,180);
+        Sound.checkpoint(); }
+    }
+  } else if(cabinWaveState==='done'){
+    checkCabinReturn();
+  }
+}
+function checkCabinReturn(){
+  const ex=cabinLevel.exitX;
+  const near=Math.abs((player.x+player.w/2)-ex)<52 && player.onGround;
+  if(near){ cabinPrompt='↑ 返回甲板'; if(jumpEdge){ jumpEdge=false; startCabinExit(); } }
+}
+// 陷阱统一更新：活板门开合 / 天花板下压 / 舷窗爆裂水柱 + 减速 debuff
+function updateCabinTraps(){
+  const lv=cabinLevel; if(!lv) return;
+  if(playerSlowT>0) playerSlowT--;
+  // 活板门：周期开合，开启前 warnLead 帧红光警示
+  for(const t of lv.trapdoors){
+    t.phase=(t.phase+1)%t.period;
+    const wantOpen = t.phase < t.openDur;
+    t.warn = (!wantOpen) && (t.phase > t.period - t.warnLead);
+    if(wantOpen && !t.open){ t.open=true; t.plank.y=LEVEL_H+400; if(t.water) t.water._hidden=false; Sound.noise(.22,.12,0,420); }
+    else if(!wantOpen && t.open){ t.open=false; t.plank.y=GROUND_TOP; if(t.water) t.water._hidden=true; }
+    // 落水视觉（伤害/传送由 checkHazards 的 water 分支处理）
+    if(t.open && player.x+player.w>t.x && player.x<t.x+t.w && player.y+player.h>GROUND_TOP+6 && frame%3===0){
+      for(let i=0;i<3;i++) ripple(player.x+rand(-8,8), GROUND_TOP+rand(0,10));
+    }
+  }
+  updateCabinCeiling(lv);
+  updateCabinPortholes(lv);
+}
+function updateCabinCeiling(lv){
+  const c=lv.ceiling; if(!c) return;
+  c.phase=(c.phase+1)%c.period;
+  const p=c.phase;
+  const descStart=c.warnLead, descEnd=c.warnLead+c.descentT, holdEnd=descEnd+90, retEnd=holdEnd+80;
+  c.warn = p<c.warnLead;
+  let ty;
+  if(p<descStart) ty=c.restY;
+  else if(p<descEnd) ty=lerp(c.restY, c.lowY, (p-descStart)/c.descentT);
+  else if(p<holdEnd) ty=c.lowY;
+  else if(p<retEnd) ty=lerp(c.lowY, c.restY, (p-holdEnd)/(retEnd-holdEnd));
+  else ty=c.restY;
+  c.y=ty;
+  if(p===0){ Sound.noise(.32,.14,0,300); Sound.blip(120,.32,'sawtooth',.16,0,80); }   // 液压声（预警起）
+  if(p===descStart){ Sound.blip(90,.4,'sawtooth',.2,0,60); Sound.noise(.4,.16,0,240); }
+  // 压迫玩家：头顶接触即下压 + 阶段性伤害
+  if(c.hitCd>0) c.hitCd--;
+  const ceilBottom=c.y+c.h;
+  if(player.x+player.w>c.x && player.x<c.x+c.w && player.y<ceilBottom && ty>c.restY+40){
+    player.y=ceilBottom; if(player.vy<0) player.vy=0; player.vy+=0.6;
+    if(c.hitCd<=0){ damagePlayer(8, player.x+player.w/2); c.hitCd=34; }
+  }
+}
+function updateCabinPortholes(lv){
+  lv._portT=(lv._portT||0)+1;
+  if(lv._portT>300){ lv._portT=0;
+    const cand=lv.portholes.filter(pt=>pt.burstT<=0);
+    if(cand.length){ const pt=cand[(Math.random()*cand.length)|0]; pt.burstT=110; pt.broken=true;
+      Sound.noise(.4,.2,0,700); Sound.blip(200,.2,'sawtooth',.14,0,90);
+      for(let i=0;i<10;i++) burst(pt.x, pt.y+8, 'rgba(200,235,250,0.8)', 1, 4); }
+  }
+  for(const pt of lv.portholes){
+    if(pt.burstT>0){ pt.burstT--;
+      if(frame%2===0 && particles.length<220){
+        particles.push({x:pt.x+rand(-7,7), y:pt.y+8, vx:rand(-1.2,1.2), vy:rand(3,6), life:rand(16,30), max:30, color:'rgba(180,222,244,0.75)', size:rand(2,4), g:0.22});
+      }
+      // 水柱列命中玩家 → 减速 debuff
+      if(player.x+player.w>pt.x-12 && player.x<pt.x+12 && player.y+player.h>pt.y+6){
+        playerSlowT=Math.max(playerSlowT,42);
+        if(frame%14===0) addFloater(player.x+player.w/2, player.y-18, '水柱 · 减速!', '#a8d8f0', 12);
+      }
+    } else if(pt.burstT<=0) pt.broken=false;
+  }
+}
+/* -------- 船舱视觉：昏暗铆钉金属舱室背景（屏幕空间，带轻微视差） -------- */
+function drawCabinBackground(t){
+  // 底色：深灰 + 铁锈棕渐变
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#161a1e'); g.addColorStop(0.55,'#121417'); g.addColorStop(1,'#0a0b0d');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const off=(camX*0.85);
+  // 金属板缝 + 铆钉点阵
+  ctx.save();
+  const panelW=132, panelH=118;
+  for(let py=-panelH; py<H+panelH; py+=panelH){
+    for(let bx=-((off%panelW)+panelW); bx<W+panelW; bx+=panelW){
+      // 板面明暗（强对比）
+      const shade=0.06+0.05*Math.sin((bx+py)*0.02);
+      ctx.fillStyle='rgba(50,60,66,'+shade.toFixed(3)+')'; ctx.fillRect(bx+3,py+3,panelW-6,panelH-6);
+      ctx.strokeStyle='rgba(8,10,12,0.7)'; ctx.lineWidth=2; ctx.strokeRect(bx+2,py+2,panelW-4,panelH-4);
+      ctx.strokeStyle='rgba(120,132,138,0.14)'; ctx.lineWidth=1; ctx.strokeRect(bx+3,py+3,panelW-6,panelH-6);
+      // 铆钉
+      ctx.fillStyle='rgba(150,160,166,0.5)';
+      const rr=[[10,10],[panelW-10,10],[10,panelH-10],[panelW-10,panelH-10],[panelW/2,panelH/2]];
+      for(const r of rr){ ctx.beginPath(); ctx.arc(bx+r[0],py+r[1],2.1,0,6.283); ctx.fill(); }
+      // 铁锈斑（确定性）
+      const rn=hnoise(((bx*0.13)|0)*7+((py*0.11)|0));
+      if(rn>0.7){ ctx.fillStyle='rgba(90,52,30,0.22)'; ctx.beginPath(); ctx.arc(bx+panelW*0.3+rn*30, py+panelH*0.4, 8+rn*10, 0, 6.283); ctx.fill(); }
+    }
+  }
+  ctx.restore();
+  // 舷窗（透出海浪波动蓝光，正弦波动）
+  const portOff=(camX*0.85);
+  const ports=[210,486,770];
+  for(let k=0;k<ports.length;k++){
+    const wx=ports[k]-portOff, wy=GROUND_TOP-152;
+    if(wx<-60||wx>W+60) continue;
+    ctx.save();
+    // 外圈铁环
+    ctx.fillStyle='#2a3238'; ctx.beginPath(); ctx.arc(wx,wy,30,0,6.283); ctx.fill();
+    ctx.fillStyle='#3c464e'; ctx.beginPath(); ctx.arc(wx,wy,26,0,6.283); ctx.fill();
+    // 玻璃内海景蓝光（正弦波动）
+    ctx.beginPath(); ctx.arc(wx,wy,22,0,6.283); ctx.clip();
+    const sg=ctx.createLinearGradient(wx,wy-22,wx,wy+22);
+    sg.addColorStop(0,'rgba(40,90,130,0.9)'); sg.addColorStop(1,'rgba(14,40,66,0.95)'); ctx.fillStyle=sg; ctx.fillRect(wx-24,wy-24,48,48);
+    ctx.strokeStyle='rgba(150,210,240,0.55)'; ctx.lineWidth=1.5;
+    for(let i=0;i<3;i++){ const yy=wy-8+i*10+Math.sin(t*0.05+i+k)*4; ctx.beginPath(); ctx.moveTo(wx-22,yy); for(let xx=-22;xx<=22;xx+=6){ ctx.lineTo(wx+xx, yy+Math.sin(xx*0.25+t*0.06+i)*2.2); } ctx.stroke(); }
+    ctx.restore();
+    // 铆钉环
+    ctx.fillStyle='rgba(150,160,166,0.6)';
+    for(let a=0;a<8;a++){ const ang=a/8*6.283; ctx.beginPath(); ctx.arc(wx+Math.cos(ang)*28, wy+Math.sin(ang)*28, 1.8, 0, 6.283); ctx.fill(); }
+    // 舷窗冷光晕
+    const halo=ctx.createRadialGradient(wx,wy,6,wx,wy,70); halo.addColorStop(0,'rgba(70,140,190,0.18)'); halo.addColorStop(1,'rgba(70,140,190,0)'); ctx.fillStyle=halo; ctx.beginPath(); ctx.arc(wx,wy,70,0,6.283); ctx.fill();
+  }
+  // 摇摆吊灯 + 动态光锥（正弦摆动，光锥随之投射）
+  const lampX=[150,430,700];
+  for(let k=0;k<lampX.length;k++){
+    const lx=lampX[k]-portOff*1.0, ly=GROUND_TOP-232;
+    if(lx<-80||lx>W+80) continue;
+    const sw=Math.sin(t*0.03 + k*1.7)*0.28;      // 摆角
+    const bob=Math.cos(t*0.03 + k*1.7);
+    ctx.save();
+    // 吊索
+    ctx.strokeStyle='rgba(20,24,26,0.9)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(lx,ly-46); ctx.lineTo(lx+Math.sin(sw)*40, ly); ctx.stroke();
+    const hx=lx+Math.sin(sw)*40, hy=ly;
+    // 光锥（半透明扇形，随摆动扫动 → 模拟动态阴影移动）
+    const cone=ctx.createLinearGradient(hx,hy,hx,GROUND_TOP);
+    cone.addColorStop(0,'rgba(255,224,150,0.16)'); cone.addColorStop(1,'rgba(255,210,120,0)');
+    ctx.fillStyle=cone; ctx.beginPath(); ctx.moveTo(hx,hy);
+    ctx.lineTo(hx-70+sw*120, GROUND_TOP); ctx.lineTo(hx+70+sw*120, GROUND_TOP); ctx.closePath(); ctx.fill();
+    // 灯体
+    ctx.fillStyle='#3a3026'; ctx.beginPath(); ctx.moveTo(hx-10,hy-8); ctx.lineTo(hx+10,hy-8); ctx.lineTo(hx+6,hy+8); ctx.lineTo(hx-6,hy+8); ctx.closePath(); ctx.fill();
+    const bulb=0.7+0.25*Math.sin(t*0.2+k);
+    ctx.fillStyle='rgba(255,226,150,'+bulb.toFixed(2)+')'; ctx.beginPath(); ctx.arc(hx,hy+4,4,0,6.283); ctx.fill();
+    const gl=ctx.createRadialGradient(hx,hy+4,2,hx,hy+4,26); gl.addColorStop(0,'rgba(255,226,150,0.5)'); gl.addColorStop(1,'rgba(255,226,150,0)'); ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(hx,hy+4,26,0,6.283); ctx.fill();
+    ctx.restore();
+  }
+  // 顶部与底部压暗横带，强化压迫感
+  const tb=ctx.createLinearGradient(0,0,0,H*0.28); tb.addColorStop(0,'rgba(0,0,0,0.6)'); tb.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=tb; ctx.fillRect(0,0,W,H*0.28);
+}
+/* -------- 船舱陷阱世界层：活板门/天花板/舷窗水柱/板条箱/返回舱口 -------- */
+function drawCabinTraps(){
+  const lv=cabinLevel; if(!lv) return;
+  // 板条箱（翻倒木箱：木板条 + 铁角，覆盖在 solid 平台上）
+  for(const cr of lv.crates){
+    ctx.save(); ctx.translate(cr.x+cr.w/2, cr.y+cr.h/2); ctx.rotate(cr.tilt*0.35);
+    ctx.fillStyle='#6a4a2a'; ctx.fillRect(-cr.w/2,-cr.h/2,cr.w,cr.h);
+    ctx.fillStyle='#835a34'; ctx.fillRect(-cr.w/2+2,-cr.h/2+2,cr.w-4,cr.h-4);
+    ctx.strokeStyle='#3a2814'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(-cr.w/2,-cr.h/6); ctx.lineTo(cr.w/2,-cr.h/6); ctx.moveTo(-cr.w/2,cr.h/6); ctx.lineTo(cr.w/2,cr.h/6);
+    ctx.moveTo(-cr.w/2,-cr.h/2); ctx.lineTo(cr.w/2,cr.h/2); ctx.stroke();
+    ctx.fillStyle='#2c2012'; const cS=4; ctx.fillRect(-cr.w/2,-cr.h/2,cS,cS); ctx.fillRect(cr.w/2-cS,-cr.h/2,cS,cS); ctx.fillRect(-cr.w/2,cr.h/2-cS,cS,cS); ctx.fillRect(cr.w/2-cS,cr.h/2-cS,cS,cS);
+    ctx.restore();
+  }
+  // 活板门
+  for(const t of lv.trapdoors){
+    if(t.open){
+      // 缺口：深黑 + 底部海水微光
+      ctx.fillStyle='rgba(4,8,10,0.9)'; ctx.fillRect(t.x, GROUND_TOP, t.w, 46);
+      ctx.fillStyle='rgba(40,90,130,'+(0.5+0.2*Math.sin(frame*0.1))+')'; ctx.fillRect(t.x+4, GROUND_TOP+40, t.w-8, 8);
+      ctx.strokeStyle='rgba(150,210,240,0.5)'; ctx.lineWidth=1.4;
+      for(let i=0;i<t.w;i+=18){ const wy=GROUND_TOP+42+Math.sin(frame*0.12+i)*2; ctx.beginPath(); ctx.moveTo(t.x+i,wy); ctx.lineTo(t.x+i+10,wy); ctx.stroke(); }
+    } else {
+      // 关闭：金属活板门面 + 铰链
+      ctx.fillStyle='#39434a'; ctx.fillRect(t.x, GROUND_TOP, t.w, 10);
+      ctx.strokeStyle='rgba(10,12,14,0.8)'; ctx.lineWidth=2; ctx.strokeRect(t.x+1, GROUND_TOP+1, t.w-2, 8);
+      ctx.fillStyle='rgba(150,160,166,0.6)'; ctx.beginPath(); ctx.arc(t.x+7,GROUND_TOP+5,2,0,6.283); ctx.arc(t.x+t.w-7,GROUND_TOP+5,2,0,6.283); ctx.fill();
+    }
+    // 预警红色热光闪烁（开启前 2s）
+    if(t.warn){
+      const a=0.35+0.35*Math.sin(frame*0.4);
+      ctx.fillStyle='rgba(255,60,40,'+a.toFixed(3)+')'; ctx.fillRect(t.x, GROUND_TOP-3, t.w, 4);
+      const gg=ctx.createLinearGradient(0,GROUND_TOP-30,0,GROUND_TOP); gg.addColorStop(0,'rgba(255,40,30,0)'); gg.addColorStop(1,'rgba(255,50,36,'+(0.16*a+0.06).toFixed(3)+')'); ctx.fillStyle=gg; ctx.fillRect(t.x, GROUND_TOP-30, t.w, 30);
+      ctx.fillStyle='rgba(255,120,90,'+a.toFixed(2)+')'; ctx.font='bold 11px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('⚠', t.x+t.w/2, GROUND_TOP-8); ctx.textAlign='left';
+    }
+  }
+  // 天花板压缩机构
+  const c=lv.ceiling;
+  if(c){
+    ctx.save();
+    // 主体金属条
+    ctx.fillStyle='#2b333a'; ctx.fillRect(c.x, c.y, c.w, c.h);
+    ctx.fillStyle='#39434a'; ctx.fillRect(c.x+2, c.y+2, c.w-4, c.h-6);
+    ctx.strokeStyle='rgba(8,10,12,0.8)'; ctx.lineWidth=2; ctx.strokeRect(c.x+1, c.y+1, c.w-2, c.h-2);
+    // 底面尖刺齿（威胁感）
+    ctx.fillStyle='#525c63';
+    for(let x=c.x+6; x<c.x+c.w-6; x+=20){ ctx.beginPath(); ctx.moveTo(x, c.y+c.h); ctx.lineTo(x+6, c.y+c.h+8); ctx.lineTo(x+12, c.y+c.h); ctx.closePath(); ctx.fill(); }
+    // 铆钉
+    ctx.fillStyle='rgba(150,160,166,0.5)';
+    for(let x=c.x+12; x<c.x+c.w; x+=40){ ctx.beginPath(); ctx.arc(x, c.y+8, 2, 0, 6.283); ctx.fill(); }
+    // 两侧液压杆
+    ctx.strokeStyle='#4a545b'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(c.x+8, 0); ctx.lineTo(c.x+8, c.y); ctx.moveTo(c.x+c.w-8, 0); ctx.lineTo(c.x+c.w-8, c.y); ctx.stroke();
+    ctx.restore();
+    // 下降预警：红色横向扫光条
+    if(c.warn){
+      const a=0.4+0.35*Math.sin(frame*0.45);
+      const scanY=c.y+c.h+6 + ((frame*4)%(GROUND_TOP-(c.y+c.h)-6));
+      ctx.fillStyle='rgba(255,50,40,'+(0.22*a).toFixed(3)+')'; ctx.fillRect(c.x, c.y+c.h, c.w, GROUND_TOP-(c.y+c.h));
+      ctx.fillStyle='rgba(255,90,70,'+a.toFixed(3)+')'; ctx.fillRect(c.x, scanY-2, c.w, 3);
+      ctx.fillStyle='rgba(255,140,100,'+a.toFixed(2)+')'; ctx.font='bold 12px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('⚠ 天花板下降 ⚠', c.x+c.w/2, c.y+c.h+16); ctx.textAlign='left';
+    }
+  }
+  // 舷窗爆裂水柱（蓝白半透明粒子束，粒子飞溅由 particles 处理）
+  for(const pt of lv.portholes){
+    if(pt.burstT>0){
+      const a=clamp(pt.burstT/40,0,1);
+      const jg=ctx.createLinearGradient(pt.x,pt.y,pt.x,GROUND_TOP);
+      jg.addColorStop(0,'rgba(210,240,252,'+(0.55*a).toFixed(3)+')'); jg.addColorStop(0.5,'rgba(150,210,240,'+(0.4*a).toFixed(3)+')'); jg.addColorStop(1,'rgba(120,190,230,'+(0.12*a).toFixed(3)+')');
+      ctx.fillStyle=jg;
+      const wob=Math.sin(frame*0.3)*3;
+      ctx.beginPath(); ctx.moveTo(pt.x-5,pt.y); ctx.lineTo(pt.x+5,pt.y); ctx.lineTo(pt.x+10+wob, GROUND_TOP); ctx.lineTo(pt.x-10+wob, GROUND_TOP); ctx.closePath(); ctx.fill();
+      // 破裂舷窗闪白
+      ctx.fillStyle='rgba(230,248,255,'+(0.3*a).toFixed(3)+')'; ctx.beginPath(); ctx.arc(pt.x,pt.y,10,0,6.283); ctx.fill();
+    }
+  }
+  // 返回舱口（清舱后开启）
+  if(cabinWaveState==='done'){
+    const ex=lv.exitX, ey=GROUND_TOP-52;
+    const a=0.5+0.3*Math.sin(frame*0.12);
+    ctx.fillStyle='#241a12'; ctx.fillRect(ex-16, ey, 32, 52);
+    const dg=ctx.createLinearGradient(ex-14,ey,ex-14,ey+52); dg.addColorStop(0,'rgba(120,180,200,'+(0.3*a).toFixed(3)+')'); dg.addColorStop(1,'rgba(30,50,66,0.9)'); ctx.fillStyle=dg; ctx.fillRect(ex-14,ey+2,28,48);
+    ctx.strokeStyle='rgba(255,235,160,'+a.toFixed(2)+')'; ctx.lineWidth=2; ctx.strokeRect(ex-14,ey+2,28,48);
+    ctx.fillStyle='rgba(255,235,160,'+a.toFixed(2)+')'; ctx.font='bold 10px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('返回甲板', ex, ey-6); ctx.textAlign='left';
+  }
+}
+
 function updateCompanion(){
   const c=companion; if(!c||!c.active) return;
   const solids=solidsList();
@@ -4899,6 +5506,9 @@ function startBoss(entry){
 function updateBossPlan(){
   if(state!==STATE.PLAY || player.dead) return;
   if(boss){ updateBoss(); updateBossUlt(); return; }
+  // 第四幕：船舱是刺客队长 Boss 的前置闸门——舱内未肃清前不触发甲板 Boss
+  // （仅当本关确实存在舱门时才 gate，避免舱门缺失时主线卡死）
+  if(actIndex===ACT_ENGLAND && !cabinCleared && !cabinActive && level.triggers && level.triggers.some(t=>t.type==='door')) return;
   const plan=level.bossPlan;
   for(const entry of plan){
     if(entry.defeated) continue;      // 已击败：跳过，检查下一个
@@ -4928,10 +5538,11 @@ function damageBoss(dmg, fromX, ranged){
   }
   if(boss.hp<=0){ boss.hp=0; onBossDefeated(); }
 }
+let bossRageT = 0, bossRagePhase = 1;   // 第五幕 Boss 阶段切换狂暴视觉计时（帧）
 function bossPhaseTransition(ph){
   boss.phase=ph; boss.invuln=90; boss.atkCd=60;
   Sound.bossPhase(); shake(10,24); flash(ph>=3?'rgba(200,20,20,0.4)':'rgba(200,120,40,0.3)',18);
-  if(boss.kind==='claudius') spawnShockwave();   // 第五幕阶段切换：全屏圆形冲击波
+  if(boss.kind==='claudius'){ spawnShockwave(); bossRageT=90; bossRagePhase=ph; }   // 第五幕阶段切换：全屏圆形冲击波 + 狂暴视觉爆发
   for(let i=0;i<26;i++) burst(boss.x+boss.w/2, boss.y+boss.h/2, ph>=3?'#ff4040':'#ffb060', 1, 5);
   const line=(BOSS_PHASE_LINES[boss.kind]||{})[ph];
   const lines=[];
@@ -4950,6 +5561,7 @@ function bossPhaseTransition(ph){
 function updateBoss(){
   if(!boss) return;
   const b=boss, D=b.def;
+  if(bossRageT>0) bossRageT--;
   if(b.hitFlash>0)b.hitFlash--; if(b.invuln>0)b.invuln--;
   if(ghostOpheliaFinale && b.kind==='claudius' && frame%96===0){
     b.hp=Math.max(0,b.hp-5); b.hitFlash=8; Sound.battleCue('ghostOpheliaAttack'); ripple(b.x+b.w/2, b.y+b.h*0.45); addFloater(b.x+b.w/2, b.y-18, '亡魂奥菲莉亚助战', '#bfe4ff', 12);
@@ -5330,6 +5942,11 @@ function update(){
 let hudTick=0;
 function updatePlay(){
   stats.time += 1/60;
+  cabinPrompt=null;   // 交互提示每帧重置，靠近才显示
+  // 第四幕船舱过场（开门/淡黑/淡入/返回）阶段：冻结常规更新，只推进过场
+  if(cabinPhase && cabinPhase!=='active'){ updateCabinTransition(); updateCamera(); if(++hudTick%4===0) updateHUD(); return; }
+  // 甲板上靠近舱门：显示提示并处理"↑ 进入"（返回 true 表示本帧已开始进舱，跳过后续）
+  if(actIndex===ACT_ENGLAND && !cabinActive && cabinPhase===null){ if(updateCabinDeckPrompt()) return; }
   updateMovers();
   updatePlayer();
   if(player.dead) return; // 死亡后进入 LOSE
@@ -5339,6 +5956,8 @@ function updatePlay(){
   updateRocks();
   updatePickups();
   updateTriggersAndCheckpoints();
+  // 第四幕船舱战斗区：波次推进 + 陷阱机制 + 返回甲板
+  if(cabinActive && cabinPhase==='active') updateCabin();
   Dialog.update();                 // 非阻断顶部对白栏（不暂停游戏）
   updatePunkOphelia();             // 第三幕背景疯癫奥菲莉亚
   updateCourtOphelia();            // 第二幕背景正常奥菲莉亚（宫廷 NPC）
@@ -5369,7 +5988,7 @@ function updatePlay(){
   }
   // 湖畔/英格兰花瓣、海雾氛围
   if(actIndex===ACT_LAKE && frame%20===0) spawnPetal(camX+rand(0,VW), camY-10, '#dfeaf5');
-  if(actIndex===ACT_ENGLAND && frame%30===0) spawnPetal(camX+rand(0,VW), camY-10, 'rgba(210,225,235,0.6)');
+  if(actIndex===ACT_ENGLAND && !cabinActive && frame%30===0) spawnPetal(camX+rand(0,VW), camY-10, 'rgba(210,225,235,0.6)');
   checkLevelProgress();
   updateCamera();
   if(++hudTick%4===0) updateHUD();
@@ -5561,10 +6180,12 @@ function render(){
   if(state===STATE.TITLE || state===STATE.NICKNAME_SETUP){ drawTitleScene(); }
   else if(state==='ending'){ drawEndingScene(); return; }
   else {
-    // 第四幕英格兰：整个视角周期性轻微倾斜 ±2°（sin 波，周期 4s，模拟船只颠簸）
-    // 仅包裹渲染阶段，物理/碰撞坐标完全不受影响。
-    const tilt = (actIndex===ACT_ENGLAND && state===STATE.PLAY)
-      ? Math.sin(frame*(Math.PI*2/240))*(2*Math.PI/180) : 0;
+    // 第四幕英格兰：整个视角随海浪周期性轻微倾斜，由作用于玩家的 rockAngle 驱动。
+    // 仅包裹渲染阶段，物理/碰撞坐标完全不受影响；舱内 rockAngle=0，大浪阶段幅度已在物理中加大。
+    let tilt = 0;
+    if(actIndex===ACT_ENGLAND && state===STATE.PLAY && !cabinActive){
+      tilt = rockAngle;
+    }
     if(tilt){
       ctx.save();
       // 旋转前先铺满略大区域，用背景色填满旋转露出的四角，避免黑边
@@ -5596,6 +6217,8 @@ function render(){
     if(bossStarted && player && !player.dead) drawEnergyBar();
     if(bonusLevel) drawBonusOverlay();
     drawScreenFloaters();
+    // 第四幕船舱进/出过场：全屏淡黑遮罩（覆盖 UI 之上，确保切换无缝）
+    if(cabinFade>0){ ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='rgba(0,0,0,'+clamp(cabinFade,0,1).toFixed(3)+')'; ctx.fillRect(0,0,W,H); ctx.restore(); }
     if(actIndex===3 && state===STATE.PLAY) {/* timer in HUD */}
   }
 }
@@ -5604,7 +6227,7 @@ function drawWorld(){
   const vx0=camX-40, vx1=camX+VW+40;
   for(const p of level.platforms){ if(p.x+p.w<vx0||p.x>vx1)continue; drawPlatform(p); }
   for(const m of level.movers){ if(m.x+m.w<vx0||m.x>vx1)continue; drawPlatform(m); }
-  for(const hz of level.hazards){ if(hz.x+hz.w<vx0||hz.x>vx1)continue; drawHazard(hz); }
+  for(const hz of level.hazards){ if(hz._hidden||hz.x+hz.w<vx0||hz.x>vx1)continue; drawHazard(hz); }
   for(const bk of level.breakables){ if(bk.dead||bk.x+bk.w<vx0||bk.x>vx1)continue; drawBreakable(bk); }
   for(const ch of level.chests){ if(ch.taken||ch.x>vx1||ch.x+ch.w<vx0)continue; drawChest(ch); }
   for(const tr of level.triggers){ if(tr.x+tr.w<vx0||tr.x>vx1)continue; if(tr.type==='bonusEntrance')continue; drawTrigger(tr); }
@@ -5630,6 +6253,8 @@ function drawWorld(){
   else if(boss && boss.dead && boss.deathT>0){ ctx.save(); ctx.globalAlpha=clamp(boss.deathT/120,0,1); drawBoss(boss); ctx.restore(); }
   // 玩家
   if(player && !player.dead){ drawPlayerWorld(); }
+  // 第四幕船舱陷阱层（世界空间）：活板门警示/缺口、天花板扫光、舷窗水柱、板条箱
+  if(cabinActive) drawCabinTraps();
   // 粒子/花瓣
   drawParticlesWorld();
 }
@@ -6276,11 +6901,26 @@ function drawForeground(){
   else { const g=ctx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,H*0.85); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,0.4)'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
   // 段落名提示（世界分段）
   drawSegmentBanner();
+  // 第四幕船舱：更昏暗压迫的暗角遮罩（明暗对比强）
+  if(cabinActive){
+    const g=ctx.createRadialGradient(W/2,H*0.42,H*0.18,W/2,H*0.5,H*0.95);
+    g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(0.6,'rgba(4,8,10,0.42)'); g.addColorStop(1,'rgba(2,4,6,0.86)');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  }
+  // 常驻交互提示（靠近舱门 / 舱内返回口时显示，离开消失）
+  if(cabinPrompt){
+    ctx.save(); ctx.textAlign='center'; ctx.font='bold 15px "Courier New",monospace';
+    const tw=ctx.measureText(cabinPrompt).width, pad=16;
+    const pulse=0.6+0.25*Math.sin(frame*0.14);
+    drawTextPanel(W/2-tw/2-pad, H-78, tw+pad*2, 32, 'rgba(8,6,14,0.86)', 'rgba(255,220,150,'+pulse.toFixed(2)+')');
+    ctx.fillStyle='#ffe6a0'; ctx.fillText(cabinPrompt, W/2, H-56);
+    ctx.restore(); ctx.textAlign='left';
+  }
 }
 function worldToScreen(wx,wy){ return { x:(wx-camX)*ZOOM, y:(wy-camY)*ZOOM }; }
 // 最终 Boss（克劳迪奥）画面特效：电闪雷鸣 / 狂风骤雨 / 进场暗化。屏幕空间绘制，帧驱动无定时器。
 function drawFinalBattleFx(){
-  if(!(boss && boss.kind==='claudius' && !boss.dead && state===STATE.PLAY)) return;
+  if(!(boss && boss.kind==='claudius' && state===STATE.PLAY && (!boss.dead || boss.deathT>0))) return;
   const now=frame;
   ctx.save();
   // ---- 进场暗化：约 2s（120 帧）从画面中央向外扩散的黑色遮罩，alpha 由高到低 ----
@@ -6301,11 +6941,11 @@ function drawFinalBattleFx(){
   cloud.addColorStop(0, doom?'rgba(24,16,40,0.55)':'rgba(14,20,40,0.5)'); cloud.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=cloud; ctx.fillRect(0,0,W,H*0.4);
   for(let c=0;c<5;c++){ const cx=((now*0.6+c*230)%(W+300))-150, cy=H*0.06+c*14; const cg=ctx.createRadialGradient(cx,cy,6,cx,cy,120); cg.addColorStop(0, doom?'rgba(40,26,60,0.5)':'rgba(30,40,66,0.45)'); cg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=cg; ctx.beginPath(); ctx.ellipse(cx,cy,120,44,0,0,6.283); ctx.fill(); }
-  // ---- 背景远处连续背景闪（低亮度、云层内辉映） ----
-  const bgL=Math.max(0, Math.sin(now*0.07)*Math.sin(now*0.017));
+  // ---- 背景远处连续背景闪（低亮度、云层内辉映；微闪频率加倍，双频叠加更躁动） ----
+  const bgL=Math.max(0, Math.sin(now*0.07)*Math.sin(now*0.017)) + 0.5*Math.max(0, Math.sin(now*0.14)*Math.sin(now*0.034));
   if(bgL>0.25){ const bg=ctx.createLinearGradient(0,0,0,H*0.5); bg.addColorStop(0,(doom?'rgba(150,120,200,':'rgba(150,190,235,')+(0.10*bgL).toFixed(3)+')'); bg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H*0.5); }
-  // ---- 动态全屏暗角：压迫感随战斗激烈程度（阶段/剩余血量）加深 ----
-  const vigA=(doom?0.6:0.55)+intensity*0.22+(1-ratio)*0.10;
+  // ---- 动态全屏暗角：压迫感随战斗激烈程度（阶段/剩余血量）加深，阶段切换瞬间进一步收紧 ----
+  const vigA=(doom?0.6:0.55)+intensity*0.22+(1-ratio)*0.10 + (bossRageT>0?(bossRageT/90)*0.12:0);
   const vig=ctx.createRadialGradient(W/2,H*0.5,H*0.35,W/2,H*0.5,H*0.95); vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1, (doom?'rgba(8,4,16,':'rgba(4,6,16,')+clamp(vigA,0,0.9).toFixed(3)+')'); ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
   // ---- 暴雨三层：远景蒙雨（细、慢）/ 中景斜雨（中、倾斜）/ 近景暴雨（粗长、快）+ 地面溅水 ----
   const gust=1+0.55*Math.sin(now*0.018)+0.2*Math.sin(now*0.05);
@@ -6315,6 +6955,8 @@ function drawFinalBattleFx(){
   for(let i=0;i<64;i++){ const seed=i*97, spd=13+(i%4)*4; const x=((seed*13)%W+now*spd*0.5)%W; const y=((seed*29)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+6*gust,y+20); ctx.stroke(); }
   ctx.strokeStyle=(doom?'rgba(215,205,245,':'rgba(210,235,255,')+'0.55)'; ctx.lineWidth=2.2;                     // 近景暴雨（粗长快）
   for(let i=0;i<48;i++){ const seed=i*131, spd=22+(i%4)*5; const x=((seed*13)%W+now*spd*0.6)%W; const y=((seed*37)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+9*gust,y+32); ctx.stroke(); }
+  ctx.strokeStyle=(doom?'rgba(225,215,250,':'rgba(225,242,255,')+'0.62)'; ctx.lineWidth=3.4;                     // 超近景贴脸暴雨（极粗、极快、拖影长）
+  for(let i=0;i<26;i++){ const seed=i*173, spd=34+(i%5)*6; const x=((seed*7)%W+now*spd*0.75)%W; const y=((seed*41)%H+now*spd)%H; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+13*gust,y+46); ctx.stroke(); }
   ctx.strokeStyle=(doom?'rgba(200,185,240,':'rgba(200,225,255,')+'0.5)'; ctx.lineWidth=1;                        // 地面溅水弧线
   for(let i=0;i<14;i++){ const x=((i*137+((now*7)%400))*7)%W; const ph=(now*0.2+i)%6.283; const r=1.5+Math.abs(Math.sin(ph))*3; ctx.beginPath(); ctx.arc(x,H*0.9+Math.sin(i)*6,r,Math.PI,0); ctx.stroke(); }
   // 横掠阵风纹（全屏斜向流动）
@@ -6323,7 +6965,7 @@ function drawFinalBattleFx(){
   // ---- 电闪雷鸣：每 random(2000,5000)ms（约 120~300 帧）触发一次，每次连闪 2~3 下 ----
   if(now>=finalLightning.next){
     finalLightning.next=now+randi(120,300);
-    finalLightning.flashes=randi(2,3);
+    finalLightning.flashes=randi(3,4);
     finalLightning.nextFlash=now;
   }
   if(finalLightning.flashes>0 && now>=finalLightning.nextFlash){
@@ -6337,9 +6979,9 @@ function drawFinalBattleFx(){
     finalLightning.segs=segs;
     // 分叉支路：从主干中段抽点向外斜插短支
     const forks=[];
-    for(let k=0;k<randi(2,3);k++){
+    for(let k=0;k<randi(4,6);k++){
       const idx=randi(2,Math.max(2,segs.length-2)); let fx=segs[idx][0], fy=segs[idx][1];
-      const dir=Math.random()<0.5?-1:1, br=[[fx,fy]], n=randi(2,4);
+      const dir=Math.random()<0.5?-1:1, br=[[fx,fy]], n=randi(3,5);
       for(let j=0;j<n;j++){ fy+=rand(18,34); fx+=dir*rand(10,34); br.push([clamp(fx,0,W),fy]); }
       forks.push(br);
     }
@@ -6387,6 +7029,36 @@ function drawFinalBattleFx(){
     ctx.strokeStyle='rgba(255,220,180,'+(a*0.55).toFixed(3)+')'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(W/2,H/2,r*0.72,0,6.283); ctx.stroke();
     ctx.restore();
+  }
+  // ---- 战场烟雾 / 尘埃：底部缓升的低透明烟团，营造焦土氛围 ----
+  for(let i=0;i<7;i++){ const seed=i*89; const sx=((seed*11 + now*0.4)%(W+240))-120; const rise=(now*0.5+seed)%180; const sy=H*0.94-rise*0.5; const rr=40+rise*0.5+(seed%4)*10;
+    const sg=ctx.createRadialGradient(sx,sy,4,sx,sy,rr); const sa=clamp(0.16*(1-rise/180),0,0.16);
+    sg.addColorStop(0,(doom?'rgba(50,36,58,':'rgba(46,42,54,')+sa.toFixed(3)+')'); sg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sg; ctx.beginPath(); ctx.ellipse(sx,sy,rr,rr*0.6,0,0,6.283); ctx.fill(); }
+  // 飘浮尘埃微粒（缓慢横移的暖色微点）
+  ctx.fillStyle=(doom?'rgba(200,150,120,0.28)':'rgba(190,180,160,0.26)');
+  for(let i=0;i<24;i++){ const seed=i*137; const dx=((seed*7 + now*(0.6+ (seed%3)*0.3))%(W+40))-20; const dy=(seed*13 + Math.sin(now*0.02+seed)*20)%H; ctx.fillRect(dx,dy,2,2); }
+  // ---- 阶段三专属：四角焰火（角落腾起的火光辉映，脉动） ----
+  if(boss.phase>=3){
+    const pf=0.6+0.4*Math.sin(now*0.13);
+    const corners=[[0,H],[W,H],[0,H*0.62],[W,H*0.62]];
+    for(let ci=0;ci<corners.length;ci++){ const cx=corners[ci][0], cy=corners[ci][1]; const rr=(120+ci*20)*pf;
+      const fg=ctx.createRadialGradient(cx,cy,6,cx,cy,rr); fg.addColorStop(0,'rgba(255,150,50,'+(0.30*pf).toFixed(3)+')'); fg.addColorStop(0.5,'rgba(220,60,24,'+(0.16*pf).toFixed(3)+')'); fg.addColorStop(1,'rgba(120,10,10,0)');
+      ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(cx,cy,rr,0,6.283); ctx.fill();
+      // 上腾火舌
+      for(let f=0;f<3;f++){ const fx=cx+(ci%2===0?1:-1)*(20+f*16); const fy=cy-((now*2+f*40+ci*30)%140); const fl=6+Math.sin(now*0.2+f+ci)*3;
+        const lg=ctx.createRadialGradient(fx,fy,1,fx,fy,fl+3); lg.addColorStop(0,'rgba(255,220,120,0.7)'); lg.addColorStop(1,'rgba(255,90,30,0)'); ctx.fillStyle=lg; ctx.beginPath(); ctx.arc(fx,fy,fl+3,0,6.283); ctx.fill(); }
+    }
+    // ---- 阶段三专属：Boss 周围缠绕的血色电弧（世界坐标转屏幕） ----
+    const bs=worldToScreen(boss.x+boss.w/2, boss.y+boss.h/2);
+    ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.shadowColor='rgba(255,40,40,0.9)'; ctx.shadowBlur=10;
+    const arcR=(boss.w*ZOOM)*0.9;
+    for(let k=0;k<5;k++){ const a0=(now*0.06+k*1.256)%6.283; ctx.strokeStyle='rgba(255,'+(60+k*20)+',60,'+(0.5-k*0.05).toFixed(3)+')'; ctx.lineWidth=2;
+      ctx.beginPath(); let ax=bs.x+Math.cos(a0)*arcR*0.4, ay=bs.y+Math.sin(a0)*arcR*0.4; ctx.moveTo(ax,ay);
+      for(let s=1;s<=5;s++){ const ang=a0+s*0.5; const rr=arcR*(0.4+s*0.12)+ (hnoise(k*7+s+ (now>>2)%17)-0.5)*14; ax=bs.x+Math.cos(ang)*rr; ay=bs.y+Math.sin(ang)*rr; ctx.lineTo(ax,ay); }
+      ctx.stroke(); }
+    ctx.shadowBlur=0; ctx.restore();
   }
   ctx.restore();
 }
