@@ -62,10 +62,10 @@
   /* 剧情过场 */
   #storyScreen{background:rgba(3,2,6,.9);overflow:hidden}
   #storyFx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
-  .storyWrap{position:relative;z-index:2;max-width:860px;width:70%;background:rgba(8,6,14,.58);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62);backdrop-filter:blur(1px);display:grid;grid-template-columns:60% 40%;column-gap:0;box-sizing:border-box}
-  .storyTextPanel{min-width:0;padding-right:18px;box-sizing:border-box}
+  .storyWrap{position:relative;z-index:2;max-width:920px;width:min(92%,920px);background:rgba(8,6,14,.58);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62);backdrop-filter:blur(1px);display:grid;grid-template-columns:60% 40%;column-gap:0;box-sizing:border-box}
+  .storyTextPanel{min-width:0;width:100%;padding-right:18px;box-sizing:border-box}
   .storyPortraitPanel{position:relative;display:flex;align-items:center;justify-content:center;min-height:250px;overflow:hidden;pointer-events:none}
-  #storyPortrait{width:100%;max-width:300px;height:260px;display:block;filter:drop-shadow(0 18px 28px rgba(0,0,0,.72))}
+  #portraitCanvas{width:100%;max-width:300px;height:260px;display:block;filter:drop-shadow(0 18px 28px rgba(0,0,0,.72))}
   #storyAct{font-size:14px;letter-spacing:6px;color:var(--gold);opacity:.8;margin-bottom:10px}
   #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:22px;text-shadow:2px 2px 0 #000}
   #storyBody{min-height:200px;text-align:left;font-size:clamp(14px,1.9vw,19px);line-height:2.05;color:#e6dfce}
@@ -181,7 +181,7 @@
           <div id="storyBody"></div>
         </div>
         <div class="storyPortraitPanel">
-          <canvas id="storyPortrait" width="300" height="260"></canvas>
+          <canvas id="portraitCanvas" width="300" height="260"></canvas>
         </div>
         <div class="storyFoot">
           <button id="skipBtn" class="btn ghost">跳过 ▸</button>

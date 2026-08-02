@@ -429,7 +429,7 @@ const dom = {
   muteBtn:$('muteBtn'), ctrlHint:$('ctrlHint'), hintRanged:$('hintRanged'), hintLock:$('hintLock'),
   levelName:$('levelName'),
   dlgBar:$('dlgBar'), dlgLeft:$('dlgLeft'), dlgRight:$('dlgRight'), bossGuide:$('bossGuide'),
-  storyScreen:$('storyScreen'), storyFx:$('storyFx'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'), storyPortrait:$('storyPortrait'),
+  storyScreen:$('storyScreen'), storyFx:$('storyFx'), storyAct:$('storyAct'), storyTitle:$('storyTitle'), storyBody:$('storyBody'), storyPortrait:$('portraitCanvas'),
   skipBtn:$('skipBtn'), storyBtn:$('storyBtn'),
   titleScreen:$('titleScreen'), startBtn:$('startBtn'),
   levelClearScreen:$('levelClearScreen'), clearText:$('clearText'), clearScore:$('clearScore'), nextBtn:$('nextBtn'),
@@ -2015,21 +2015,22 @@ function renderStory(){
 function renderStoryPortrait(){
   if(!storyPortraitCtx || !dom.storyPortrait) return;
   const c=storyPortraitCtx, act=storyThemeAct(storyPage||{});
-  c.clearRect(0,0,dom.storyPortrait.width,dom.storyPortrait.height);
+  const pw=dom.storyPortrait.width, ph=dom.storyPortrait.height;
+  c.clearRect(0,0,pw,ph);
   const gold=act===ACT_FINAL && opheliaSaved && !darkMode;
   const doom=act===ACT_FINAL && (!opheliaSaved || darkMode);
-  const glow=c.createRadialGradient(150,126,12,150,126,128);
+  const glow=c.createRadialGradient(pw/2,ph*.48,12,pw/2,ph*.48,Math.max(pw,ph)*.45);
   glow.addColorStop(0,gold?'rgba(232,194,90,.24)':(doom?'rgba(96,45,135,.28)':'rgba(120,130,170,.22)'));
   glow.addColorStop(1,'rgba(0,0,0,0)');
-  c.fillStyle=glow; c.fillRect(0,0,300,260);
+  c.fillStyle=glow; c.fillRect(0,0,pw,ph);
   c.save();
   c.globalAlpha=.96;
-  if(typeof drawHamletPortrait==='function'){
-    const saved=ctx; ctx=c;
-    drawHamletPortrait(150,220,4.1,act);
+  const saved=ctx;
+  ctx=c;
+  try {
+    drawHamletPortrait(pw/2, ph-40, 4.1, act);
+  } finally {
     ctx=saved;
-  } else {
-    c.translate(150,132); c.scale(1.28,1.28); drawVectorHamletPortrait(c, act, gold, doom);
   }
   c.restore();
 }
@@ -3822,8 +3823,9 @@ function drawPlayerWorld(){
 }
 function drawPlayerNickname(p){
   const nickname=getPlayerNickname();
-  const dlgActive = (dom.dlgLeft && dom.dlgLeft.classList.contains('show')) || (dom.dlgRight && dom.dlgRight.classList.contains('show'));
-  if(!nickname || dlgActive) return;
+  const dlgShowing = (dom && dom.dlgLeft && dom.dlgLeft.classList.contains('show')) ||
+                     (dom && dom.dlgRight && dom.dlgRight.classList.contains('show'));
+  if(!nickname || dlgShowing) return;
   ctx.save();
   ctx.font='bold 12px "Courier New","Songti SC",monospace';
   ctx.textAlign='center';
