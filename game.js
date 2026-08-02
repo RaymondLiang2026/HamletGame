@@ -2495,6 +2495,15 @@ function buildBonusLevel(bonusAct){
     lv.triggers.push({x:1080,y:GROUND_TOP-200,w:90,h:40,type:'hint',fired:false,key:'maze_dead',msg:'此路不通，换条路试试！'});
   } else {
     lv.width=960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.goalX=760; lv.monologue={t:0,typed:0,done:false,fade:0};
+    lv._act5T=0;
+    lv._act5Toys=[
+      {type:'block', x:W*0.38, y:H*0.3, groundY:H*0.72, vy:-6, color:'#e84040'},
+      {type:'block', x:W*0.62, y:H*0.25, groundY:H*0.72, vy:-8, color:'#4080e8'},
+      {type:'block', x:W*0.55, y:H*0.2, groundY:H*0.72, vy:-5, color:'#40c840'},
+      {type:'soldier', x:W*0.42, y:H*0.3, groundY:H*0.71, vy:-4},
+      {type:'soldier', x:W*0.58, y:H*0.3, groundY:H*0.715, vy:-5},
+      {type:'carousel', x:W*0.5, y:H*0.71, groundY:H*0.71, rot:0}
+    ];
   }
   return lv;
 }
@@ -3548,16 +3557,20 @@ function updateBonusPlay(){
   if(bonusLevel.act===1){
     const goalPlatY = level.platforms.find(p=>p.board)?.y ?? (GROUND_TOP - 720);
     if(player.x+player.w>level.goalX && player.y<goalPlatY+60) finishBonus();
+  } else if(bonusLevel.act===5){
+    if(level.monologue && level.monologue.done) finishBonus();
   } else if(player.x+player.w>level.goalX && (!level.monologue || level.monologue.done)) finishBonus();
   updateCamera();
   if(++hudTick%4===0) updateHUD();
 }
 function updateBonusMonologue(){
   const m=level.monologue; if(!m) return;
-  const text='To be, or not to be, that is the question...\n生存还是毁灭，这是个问题……';
+  const text='To be, or not to be, that is the question:\n生存，还是毁灭，这是个问题';
+  const totalF=60*12;
   m.t++;
-  if(m.t>50 && m.typed<text.length && m.t%4===0) m.typed++;
-  if(m.typed>=text.length){ m.fade=Math.min(120,m.fade+1); if(m.fade>=120) m.done=true; }
+  if(m.t>=120 && m.t<=480 && m.typed<text.length && m.t%4===0) m.typed++;
+  if(m.t>=600) m.fade=Math.min(120,m.fade+1);
+  if(m.t>=totalF) m.done=true;
 }
 
 /* -------------------------------------------------------------------------
@@ -3645,19 +3658,84 @@ function drawBonusOverlay(){
   if(level.monologue) drawBonusMonologueScene();
   ctx.restore();
 }
+function drawAct5Background(ctx, alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.35;
+  const cx=W*0.5, cy=H*0.45, s=H*0.75;
+  ctx.fillStyle='#0d0d12';
+  ctx.beginPath(); ctx.ellipse(cx,cy+s*0.1,s*0.22,s*0.38,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#c8a882';
+  ctx.beginPath(); ctx.ellipse(cx-s*0.02,cy-s*0.28,s*0.09,s*0.12,-0.15,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(55,36,18,0.6)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx+s*0.04,cy-s*0.31); ctx.lineTo(cx+s*0.08,cy-s*0.27); ctx.lineTo(cx+s*0.03,cy-s*0.26); ctx.stroke();
+  ctx.fillStyle='#2a1a0a';
+  ctx.beginPath(); ctx.arc(cx-s*0.04,cy-s*0.35,s*0.085,Math.PI,0); ctx.fill();
+  for(let i=0;i<5;i++){ ctx.beginPath(); ctx.arc(cx-s*0.08+i*s*0.018,cy-s*0.37,s*0.015,0,Math.PI*2); ctx.fill(); }
+  ctx.fillStyle='#e8e0d0';
+  ctx.beginPath(); ctx.moveTo(cx-s*0.04,cy-s*0.18); ctx.lineTo(cx-s*0.06,cy-s*0.12); ctx.lineTo(cx,cy-s*0.10); ctx.lineTo(cx+s*0.02,cy-s*0.12); ctx.lineTo(cx,cy-s*0.18); ctx.fill();
+  ctx.fillStyle='#c8a820';
+  ctx.fillRect(cx+s*0.12,cy-s*0.14,s*0.055,s*0.025); ctx.fillRect(cx-s*0.18,cy-s*0.14,s*0.055,s*0.025);
+  for(let i=0;i<6;i++){ ctx.fillStyle=i%2?'#f2dc78':'#9b7514'; ctx.fillRect(cx-s*0.17+i*s*0.01,cy-s*0.135,2,2); ctx.fillRect(cx+s*0.13+i*s*0.01,cy-s*0.135,2,2); }
+  ctx.fillStyle='#0d0d12';
+  ctx.fillRect(cx+s*0.14,cy-s*0.12,s*0.06,s*0.22); ctx.fillRect(cx-s*0.22,cy-s*0.12,s*0.06,s*0.22);
+  ctx.restore();
+}
+function drawAct5Spotlight(ctx, t, totalFrames){
+  const fadeIn=Math.min(1,t/120);
+  const fadeOut=t>totalFrames-240 ? 1-((t-(totalFrames-240))/120) : 1;
+  const alpha=clamp(fadeIn*fadeOut,0,1);
+  const narrow= t>480 ? clamp((t-480)/120,0,1) : 0;
+  const cx=W*0.5, top=0, bottom=H*0.75, topHalf=60-25*narrow, bottomHalf=90-42*narrow;
+  const grad=ctx.createLinearGradient(cx,top,cx,bottom);
+  grad.addColorStop(0,'rgba(255,255,220,0)');
+  grad.addColorStop(0.3,'rgba(255,255,220,'+(alpha*0.85)+')');
+  grad.addColorStop(1,'rgba(255,255,220,'+(alpha*0.15)+')');
+  ctx.save(); ctx.beginPath(); ctx.moveTo(cx-topHalf,top); ctx.lineTo(cx+topHalf,top); ctx.lineTo(cx+bottomHalf,bottom); ctx.lineTo(cx-bottomHalf,bottom); ctx.closePath(); ctx.fillStyle=grad; ctx.fill(); ctx.restore();
+}
+function drawAct5Toys(ctx, t, toys){
+  toys.forEach(toy=>{
+    if(t<120) return;
+    if(toy.vy!==undefined && toy.y<toy.groundY){ toy.vy+=0.4; toy.y+=toy.vy; if(toy.y>=toy.groundY){ toy.y=toy.groundY; toy.vy=0; } }
+    ctx.save(); ctx.translate(toy.x,toy.y);
+    if(toy.type==='block'){
+      ctx.fillStyle=toy.color; ctx.fillRect(-8,-8,16,16); ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.strokeRect(-8,-8,16,16);
+    } else if(toy.type==='soldier'){
+      ctx.fillStyle='#cc2222'; ctx.fillRect(-4,-10,8,10); ctx.beginPath(); ctx.arc(0,-13,4,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#2a1a0a'; ctx.fillRect(-5,-17,10,2); ctx.fillStyle='#d8b088'; ctx.fillRect(-7,-5,3,9);
+    } else if(toy.type==='carousel'){
+      toy.rot=(toy.rot||0)+0.01; ctx.rotate(toy.rot); ctx.strokeStyle='#8866aa'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.stroke();
+      for(let i=0;i<4;i++){ const a=i*Math.PI/2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*14,Math.sin(a)*14); ctx.stroke(); }
+      ctx.fillStyle='rgba(240,233,214,0.8)'; ctx.fillRect(6,-3,6,4); ctx.fillRect(10,-1,3,2);
+    }
+    ctx.restore();
+  });
+}
+function drawAct5HamletFigure(ctx, t){
+  const cx=W*0.5, footY=H*0.72, rise=clamp((t-120)/120,0,1), bow=t>480?clamp((t-480)/120,0,1):0;
+  const crouch=1-rise+bow*0.55, shoulderBlink=(Math.sin(t*0.22)>0.55)?1:0;
+  ctx.save(); ctx.translate(cx,footY); ctx.scale(2.35,2.35);
+  ctx.fillStyle='#0b0b10'; ctx.fillRect(-7,-34+10*crouch,14,30-8*crouch);
+  ctx.fillStyle='#c8a882'; ctx.fillRect(-5,-46+16*crouch,10,10);
+  ctx.fillStyle='#231407'; ctx.fillRect(-7,-49+16*crouch,14,4); ctx.fillRect(-8,-46+16*crouch,3,4);
+  ctx.fillStyle='#e8e0d0'; ctx.fillRect(-3,-33+10*crouch,6,5);
+  ctx.fillStyle=shoulderBlink?'#f2dc78':'#b89424'; ctx.fillRect(-10,-32+10*crouch,5,2); ctx.fillRect(5,-32+10*crouch,5,2);
+  ctx.fillStyle='#0b0b10'; ctx.fillRect(-12,-29+11*crouch,5,17-5*crouch); ctx.fillRect(7,-29+11*crouch,5,17-5*crouch);
+  ctx.fillRect(-6,-7,5,8); ctx.fillRect(1,-7,5,8);
+  ctx.restore();
+}
 function drawBonusMonologueScene(){
-  const m=level.monologue, text='To be, or not to be, that is the question...\n生存还是毁灭，这是个问题……';
+  const m=level.monologue, text='To be, or not to be, that is the question:\n生存，还是毁灭，这是个问题';
+  const t5=m.t||0, totalF=60*12;
   ctx.save(); ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle='rgba(0,0,0,.92)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(0,0,0,.94)'; ctx.fillRect(0,0,W,H);
   const alpha=1-clamp((m.fade-40)/80,0,1);
-  const g=ctx.createRadialGradient(W/2,80,10,W/2,260,230); g.addColorStop(0,'rgba(255,255,255,'+(0.7*alpha)+')'); g.addColorStop(1,'rgba(255,255,255,0)'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='rgba(110,95,80,.95)'; for(let i=0;i<9;i++) ctx.fillRect(W/2-95+i*22,H-150-Math.sin(i)*8,18,18);
-  ctx.fillStyle='rgba(90,80,70,.9)'; ctx.fillRect(W/2-28,H-150,56,24);
-  drawHamletOn(ctx,W/2,H-140,2.2,ACT_FINAL);
-  ctx.globalAlpha=alpha; ctx.fillStyle='#f0e9d6'; ctx.font='18px "Courier New",monospace'; ctx.textAlign='center';
+  drawAct5Background(ctx, alpha);
+  drawAct5Spotlight(ctx, t5, totalF);
+  drawAct5Toys(ctx, t5, level._act5Toys || []);
+  drawAct5HamletFigure(ctx, t5);
+  ctx.globalAlpha=alpha; ctx.fillStyle='#f0e9d6'; ctx.font='16px "Courier New",monospace'; ctx.textAlign='center';
   const shown=text.slice(0,m.typed); const parts=shown.split('\n');
-  if(parts[0]) ctx.fillText(parts[0], W/2, 126);
-  if(parts[1]) ctx.fillText(parts[1], W/2, 154);
+  if(parts[0]) ctx.fillText(parts[0], W/2, 132);
+  if(parts[1]) ctx.fillText(parts[1], W/2, 160);
   ctx.globalAlpha=1; ctx.restore();
 }
 function drawPlayerWorld(){
