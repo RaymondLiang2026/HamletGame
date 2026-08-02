@@ -5402,7 +5402,12 @@ function startCabinEnter(tr){
   Sound.blip(300,.2,'square',.24); Sound.noise(.35,.14,0,460);
   addScreenFloater(W/2,150,'推开舱门 · 潜入船舱','#ffe0b0',15,80);
 }
-function startCabinExit(){ cabinPhase='toDeck'; cabinPhaseT=0; player.vx=0; player.vy=0; Sound.blip(300,.2,'square',.22); }
+function startCabinExit(){
+  if(!cabinActive || cabinPhase!=='active') return;
+  cabinPhase='toDeck'; cabinPhaseT=0; cabinPrompt=null;
+  player.vx=0; player.vy=0; player.jumpBuf=0; player.coyote=0;
+  Sound.blip(300,.2,'square',.22);
+}
 // 过场状态机（开门→淡黑→切场→淡入→战斗；返回同理）
 function updateCabinTransition(){
   cabinPhaseT++;
@@ -6259,6 +6264,11 @@ function updatePlay(){
   if(cabinPhase && cabinPhase!=='active'){ updateCabinTransition(); updateCamera(); if(++hudTick%4===0) updateHUD(); return; }
   // 甲板上靠近舱门：显示提示并处理"↑ 进入"（返回 true 表示本帧已开始进舱，跳过后续）
   if(actIndex===ACT_ENGLAND && !cabinActive && cabinPhase===null){ if(updateCabinDeckPrompt()) return; }
+  // 舱内返回甲板必须在 updatePlayer 消耗 jumpEdge 前处理；否则提示存在但按 ↑ 会被跳跃缓冲吃掉。
+  if(cabinActive && cabinPhase==='active' && cabinWaveState==='done'){
+    checkCabinReturn();
+    if(cabinPhase==='toDeck'){ updateCabinTransition(); updateCamera(); if(++hudTick%4===0) updateHUD(); return; }
+  }
   updateMovers();
   updatePlayer();
   if(player.dead) return; // 死亡后进入 LOSE
