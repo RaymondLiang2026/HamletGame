@@ -264,6 +264,67 @@ const Sound = {
     g.gain.setValueAtTime(vol,t+dur*.7); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
     s.connect(f); f.connect(g); g.connect(this.sg); s.start(t); s.stop(t+dur+.02);
   },
+  // ================= 舞台配音叠加层：环境音 + 合成配音 =================
+  stageReverbMix(dur, wet=.55){ if(!this.ctx||!this.enabled) return this.sg;
+    const inp=this.ctx.createGain(), dry=this.ctx.createGain(), d=this.ctx.createDelay(1.0), fb=this.ctx.createGain(), wg=this.ctx.createGain();
+    dry.gain.value=Math.max(0.05, 1-wet); d.delayTime.value=.28; fb.gain.value=.38; wg.gain.value=wet;
+    inp.connect(dry); dry.connect(this.sg); inp.connect(d); d.connect(fb); fb.connect(d); d.connect(wg); wg.connect(this.sg);
+    return inp;
+  },
+  stageAmbience(dur=4.0){ this.safe(function(){
+    const t=this.ctx.currentTime, d=Math.max(1.2, dur), rev=this.stageReverbMix(d,.62);
+    // 木地板脚步回响：低频敲击 + 舞台反射，避免覆盖既有 SFX，仅通过 gain 混合叠加。
+    for(let w=.12; w<d; w+=.72+Math.random()*.18){
+      this.voiceOsc({type:'triangle', f:[105,62], dur:.18, vol:.045, atk:.006, rel:.13, when:w, dest:rev});
+      this.noiseBed(.12,.018,'lowpass',360,1.2,w);
+    }
+    // 观众席静谧感：极低白噪声 + 高通滤波，若有若无。
+    this.noiseBed(d,.012,'highpass',2400,.8,0);
+    // 弦乐低鸣底托：120-180Hz 极低音量，慢速颤动。
+    this.voiceOsc({type:'sine', f:138, dur:d, vol:.035, atk:.8, rel:1.2, vib:{rate:.9,depth:8}, dest:rev});
+    this.voiceOsc({type:'sine', f:174, dur:d, vol:.018, atk:1.0, rel:1.2, vib:{rate:1.2,depth:5}, dest:rev});
+  }); },
+  syntheticVoice(kind, lineIndex=0){ this.safe(function(){
+    const dur=2.3 + (lineIndex%3)*.45, rev=this.stageReverbMix(dur+.8,.7);
+    if(kind==='ghostking' || kind==='ghost'){
+      this.voiceOsc({type:'sine', f:[82,148], dur:dur, vol:.22, atk:.55, rel:.9, vib:{rate:2.2,depth:5}, dest:rev});
+      this.voiceOsc({type:'triangle', f:[124,88], dur:dur, vol:.09, atk:.7, rel:.9, dest:rev});
+      this.noiseBed(dur,.018,'lowpass',210,2,0);
+    } else if(kind==='clown' || kind==='polonius'){
+      this.voiceOsc({type:'triangle', f:[220,330], dur:Math.min(2.5,dur), vol:.18, atk:.08, rel:.45, vib:{rate:6,depth:10}, dest:rev});
+      this.voiceOsc({type:'sine', f:280, dur:Math.min(2.1,dur), vol:.07, atk:.05, rel:.35, vib:{rate:6,depth:7}, dest:rev});
+    } else if(kind==='claudius'){
+      const lp=this.ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=520; lp.Q.value=1.4; lp.connect(rev);
+      this.voiceOsc({type:'sawtooth', f:[55,96], dur:dur+.3, vol:.20, atk:.35, rel:.85, dest:lp});
+      this.voiceOsc({type:'sawtooth', f:[82,72], dur:dur+.3, vol:.11, atk:.4, rel:.85, dest:lp});
+    } else if(kind==='laertes'){
+      for(let i=0;i<4;i++) this.voiceOsc({type:'square', f:320+i*45, dur:.42, vol:.12, atk:.015, rel:.22, when:i*.38, dest:rev});
+      this.noiseBed(1.8,.035,'highpass',1200,2,0);
+    } else if(kind==='horatio'){
+      this.voiceOsc({type:'sine', f:262, dur:dur, vol:.10, atk:.45, rel:.8, dest:rev});
+      this.voiceOsc({type:'sine', f:393, dur:dur, vol:.06, atk:.5, rel:.8, dest:rev});
+      this.voiceOsc({type:'triangle', f:524, dur:dur, vol:.032, atk:.65, rel:.8, dest:rev});
+    } else if(kind==='hamletStage'){
+      this.voiceOsc({type:'sine', f:[118,145], dur:Math.max(2.6,dur), vol:.14, atk:.45, rel:.95, vib:{rate:3.1,depth:4}, dest:rev});
+      this.voiceOsc({type:'triangle', f:[176,132], dur:Math.max(2.6,dur), vol:.055, atk:.6, rel:.95, dest:rev});
+    } else if(kind==='assassin'){
+      this.voiceAssassin();
+    }
+  }); },
+  storyVoiceCue(piece, page, lineIndex){ this.safe(function(){
+    if(!piece || !piece.speak) return;
+    const text=(piece.text||'')+' '+((page&&page.title)||'')+' '+((page&&page.act)||'');
+    let kind=null;
+    if(/老哈姆雷特|恶灵|鬼魂|先王/.test(text)) kind='ghostking';
+    else if(/波洛涅斯|小丑/.test(text)) kind='polonius';
+    else if(/克劳迪奥|弑君者/.test(text)) kind='claudius';
+    else if(/雷欧提斯/.test(text)) kind='laertes';
+    else if(/霍拉旭/.test(text)) kind='horatio';
+    else if(/哈姆雷特/.test(text)) kind='hamletStage';
+    else if(/刺客/.test(text)) kind='assassin';
+    if(kind){ this.stageAmbience(4.0); this.syntheticVoice(kind,lineIndex||0); }
+  }); },
+  monologueVoiceCue(lineIndex){ this.safe(function(){ this.stageAmbience(4.6); this.syntheticVoice('hamletStage', lineIndex||0); }); },
   // ================= 各角色 ≥3s 个性音效 =================
   // 老哈姆雷特鬼魂：低沉回响警告声（100-200Hz，渐强后渐弱，加回响，3s）
   voiceGhost(){ this.safe(function(){ const echo=this.makeEcho(.28,.4);
@@ -3131,6 +3192,7 @@ function loadStoryPage(){
   dom.storyAct.textContent=storyPage.act||'';
   dom.storyTitle.textContent=storyPage.title||'';
   storyPieces=buildPagePieces(storyPage); storyLineIdx=0; storyLineTick=0; storyComplete=false;
+  if(Sound.enabled) Sound.stageAmbience(4.8);
   resetStoryParticles(storyThemeAct(storyPage));
   renderStory();
   renderStoryPortrait();
@@ -3168,7 +3230,10 @@ function tickStory(){
   storyLineTick++;
   if(storyLineTick>=STORY_LINE_DELAY){
     storyLineTick=0; storyLineIdx++;
-    if(Sound.enabled) Sound.blip(rand(360,560),.025,'triangle',.05);
+    if(Sound.enabled){
+      Sound.blip(rand(360,560),.025,'triangle',.05);
+      Sound.storyVoiceCue(storyPieces[storyLineIdx-1], storyPage, storyLineIdx-1);
+    }
     if(storyLineIdx>=storyPieces.length){ storyLineIdx=storyPieces.length; storyComplete=true; }
     renderStory();
   }
@@ -3722,7 +3787,7 @@ function buildBonusLevel(bonusAct){
     lv.platforms.push({x:700,y:GROUND_TOP-528,w:400,h:16,type:'plat',board:true}); // 顶点特效区
     // 决战前的独白：进入后先播放一段全屏戏剧演出，结束/跳过后再开始登高
     lv.monologue={ t:0, line:0, lineT:0, fade:0, walk:0, facing:1, ending:false, done:false, skipped:false, skipRect:null,
-      px:W*0.5, walkDir:1, stepT:0, phase:0, phaseT:0, turnScale:1,
+      px:W*0.5, walkDir:1, stepT:0, phase:0, phaseT:0, turnScale:1, lastVoiceLine:-1,
       pose:_monoBasePose(), smoke:_monoInitSmoke(), headX:W*0.5, headTopY:H*0.28 };
   }
   placeBonusExitPortal(lv, bonusAct);
@@ -5171,6 +5236,7 @@ const MONO_PHASE_DUR=[160,50,72,58,132,46];
 function updateBonusMonologue(){
   const m=level.monologue; if(!m||m.done) return;
   m.t++;
+  if(m.t===1) Sound.stageAmbience(28.0);
   m.walk += 0.016;                      // 兼容旧字段
   // —— 烟雾缓慢横移（确定性漂移，避免每帧乱跳位置由 spd 决定）——
   if(m.smoke){ for(const s of m.smoke){ s.x+=s.spd; if(s.x<-180) s.x=W+180; else if(s.x>W+180) s.x=-180; } }
@@ -5201,6 +5267,7 @@ function updateBonusMonologue(){
   const local=m.t-introF;
   m.line=Math.floor(local/perLine);
   m.lineT=local-m.line*perLine;
+  if(m.line<lines.length && m.line!==m.lastVoiceLine){ m.lastVoiceLine=m.line; Sound.monologueVoiceCue(m.line); }
   if(m.line>=lines.length){ m.line=lines.length-1; m.ending=true; m.fade=0; }
 }
 function skipBonusMonologue(){
@@ -5742,6 +5809,11 @@ function _monoHamlet(m, px){
   ctx.strokeStyle='rgba(120,70,60,0.5)'; ctx.lineWidth=0.9; ctx.beginPath(); ctx.moveTo(-4,7.9); ctx.quadraticCurveTo(0,7.4,4,7.9); ctx.stroke();
   ctx.fillStyle='rgba(150,92,78,0.4)'; ctx.beginPath(); ctx.ellipse(0,9.8,3.2,1.1,0,0,6.283); ctx.fill();
   ctx.fillStyle='rgba(60,34,26,0.3)'; ctx.beginPath(); ctx.ellipse(0,12,2.6,1.4,0,0,6.283); ctx.fill();
+  // 颧骨—下颌硬线条：用细暗线压出更锐利的戏剧脸型，避免圆润卡通感
+  ctx.strokeStyle='rgba(52,30,24,0.46)'; ctx.lineWidth=0.9; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-11,-2); ctx.lineTo(-8,7); ctx.lineTo(-4,17); ctx.moveTo(11,-2); ctx.lineTo(8,7); ctx.lineTo(4,17); ctx.stroke();
+  ctx.strokeStyle='rgba(255,232,200,0.20)'; ctx.lineWidth=0.72;
+  ctx.beginPath(); ctx.moveTo(-10,-7); ctx.lineTo(-4,-5); ctx.moveTo(10,-7); ctx.lineTo(4,-5); ctx.stroke();
   // ===== 发型（偏分立体短发：底层暗块 + 中层体积 + 数条发丝高光 + 顶部受光）=====
   ctx.fillStyle='#0c0b10';
   ctx.beginPath();
@@ -5753,7 +5825,7 @@ function _monoHamlet(m, px){
   ctx.beginPath(); ctx.moveTo(-11,-16); ctx.quadraticCurveTo(-6,-25,3,-24);
   ctx.quadraticCurveTo(-2,-19,-3,-15); ctx.quadraticCurveTo(-8,-18,-11,-13); ctx.closePath(); ctx.fill();
   ctx.strokeStyle='rgba(150,140,160,0.32)'; ctx.lineWidth=0.8; ctx.lineCap='round';
-  for(let i=0;i<6;i++){ const sx=-9+i*3.4; ctx.beginPath(); ctx.moveTo(sx,-22+i*0.6); ctx.quadraticCurveTo(sx+4,-15,sx+2+i*0.5,-8+i*0.4); ctx.stroke(); }
+  for(let i=0;i<11;i++){ const sx=-10+i*2.15; ctx.beginPath(); ctx.moveTo(sx,-23+i*0.32); ctx.quadraticCurveTo(sx+4.2,-17,sx+1.8+i*0.35,-8+i*0.25); ctx.stroke(); }
   ctx.strokeStyle='rgba(90,80,100,0.5)'; ctx.lineWidth=0.7;
   for(let i=0;i<4;i++){ const sx=-6+i*4; ctx.beginPath(); ctx.moveTo(sx,-24); ctx.quadraticCurveTo(sx+3,-17,sx+1,-11); ctx.stroke(); }
   ctx.fillStyle=warm?'rgba(255,236,190,0.28)':'rgba(210,222,255,0.22)';
