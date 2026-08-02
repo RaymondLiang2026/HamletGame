@@ -330,6 +330,7 @@ const SUPABASE_URL = 'https://vxndmttnbjpuawawnwwp.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4bmRtdHRuYmpwdWF3YXdud3dwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1NjM2NTIsImV4cCI6MjEwMTEzOTY1Mn0.IjpjW5UpwhbdXFi__uwzdOKRgdsO89khwSFMg9UON2A';
 const PLAYER_UUID_KEY = 'hamlet_player_uuid';
 const PLAYER_NICKNAME_KEY = 'hamlet_player_nickname';
+const PLAYER_NICKNAME_CONFIRMED_KEY = 'hamlet_nickname_confirmed';
 let supabaseClient = null;
 let currentPlayer = { id:null, uuid:null, nickname:null, ready:false };
 
@@ -364,9 +365,11 @@ function clampNicknameInput(text){
 }
 function normalizeNickname(value){ return clampNicknameInput(value); }
 function isValidNickname(value){ return normalizeNickname(value).length>0; }
+function isNicknameConfirmed(){ return safeStorageGet(PLAYER_NICKNAME_CONFIRMED_KEY)==='1'; }
+function confirmNickname(){ safeStorageSet(PLAYER_NICKNAME_CONFIRMED_KEY, '1'); }
 function makeRandomNickname(){ return '无名王子_'+Math.random().toString(36).slice(2,6); }
 function getPlayerNickname(){ return currentPlayer.nickname || normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY)) || ''; }
-function saveNickname(nickname){ safeStorageSet(PLAYER_NICKNAME_KEY, nickname); currentPlayer.nickname=nickname; }
+function saveNickname(nickname){ safeStorageSet(PLAYER_NICKNAME_KEY, nickname); currentPlayer.nickname=nickname; updateNicknameHud(); }
 function syncPlayerProfile(){
   if(!supabaseClient || !currentPlayer.uuid || !currentPlayer.nickname) return Promise.resolve(currentPlayer);
   return supabaseClient.from('players').upsert({ browser_uuid:currentPlayer.uuid, nickname:currentPlayer.nickname }, { onConflict:'browser_uuid' }).select('id,nickname,browser_uuid').single()
@@ -386,23 +389,26 @@ function ensurePlayerProfile(){
   saveNickname(nickname);
   return syncPlayerProfile();
 }
-function waitForNickname(){
+function waitForNickname(forceEdit=false){
   const stored = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
-  if(isValidNickname(stored)) return ensurePlayerProfile();
+  if(!forceEdit && isValidNickname(stored) && isNicknameConfirmed()) return ensurePlayerProfile();
   return new Promise(resolve=>{
-    const finish = nickname=>{ saveNickname(nickname); hide(dom.nicknameScreen); ensurePlayerProfile().then(resolve); };
+    const finish = (nickname, confirmed)=>{ saveNickname(nickname); if(confirmed) confirmNickname(); hide(dom.nicknameScreen); ensurePlayerProfile().then(resolve); };
     const update = ()=>{
       const clamped=clampNicknameInput(dom.nicknameInput.value);
       if(clamped!==dom.nicknameInput.value) dom.nicknameInput.value=clamped;
       dom.nicknameCount.textContent='宽度 '+nicknameWidth(dom.nicknameInput.value)+'/20（ASCII≤15，中文≤10）';
       dom.nicknameError.textContent='';
     };
-    dom.nicknameInput.value=''; update(); hideAllOverlays(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
-    dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent='请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname); };
-    dom.nicknameSkipBtn.onclick=()=>finish(makeRandomNickname());
+    dom.nicknameInput.value=stored; update(); hideAllOverlays(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
+    dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent='请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname, true); };
+    dom.nicknameSkipBtn.onclick=()=>finish(makeRandomNickname(), false);
     dom.nicknameInput.oninput=update;
     dom.nicknameInput.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); dom.nicknameConfirmBtn.click(); } };
   });
+}
+function updateNicknameHud(){
+  if(dom && dom.nicknameValue) dom.nicknameValue.textContent = getPlayerNickname() || '待命名';
 }
 
 const dom = {
@@ -422,7 +428,7 @@ const dom = {
   messageBoard:$('messageBoard'), messageTitle:$('messageTitle'), messagePrompt:$('messagePrompt'), messageInput:$('messageInput'),
   messageCount:$('messageCount'), messageError:$('messageError'), messageSubmitBtn:$('messageSubmitBtn'), messageCloseBtn:$('messageCloseBtn'), messageList:$('messageList'),
   nicknameScreen:$('nicknameScreen'), nicknameInput:$('nicknameInput'), nicknameCount:$('nicknameCount'), nicknameError:$('nicknameError'),
-  nicknameConfirmBtn:$('nicknameConfirmBtn'), nicknameSkipBtn:$('nicknameSkipBtn')
+  nicknameConfirmBtn:$('nicknameConfirmBtn'), nicknameSkipBtn:$('nicknameSkipBtn'), nicknameValue:$('nicknameValue'), nicknameEditBtn:$('nicknameEditBtn')
 };
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
@@ -464,6 +470,7 @@ function updateHUD(){
     dom.ammoMax.textContent = player.maxAmmo;
     dom.ammoCd.textContent = player.rangedCd>0 ? '（冷却…）' : '';
   } else dom.ammoRow.style.display='none';
+  updateNicknameHud();
 }
 
 /* -------------------------------------------------------------------------
@@ -3853,6 +3860,8 @@ dom.muteBtn.addEventListener('click', ()=>{ Sound.unlock(); const on=Sound.toggl
 dom.messageSubmitBtn.addEventListener('click', submitMessage);
 dom.messageCloseBtn.addEventListener('click', closeMessageBoard);
 dom.messageInput.addEventListener('input', updateMessageMeta);
+dom.nicknameEditBtn.addEventListener('click', ()=>waitForNickname(true));
+updateNicknameHud();
 window.addEventListener('keydown', e=>{
   if(e.code==='Escape' && bonusLevel){
     e.preventDefault(); e.stopPropagation();

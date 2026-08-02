@@ -18,6 +18,10 @@
   #hud .box{background:rgba(8,6,14,.76);border:1px solid rgba(232,194,90,.52);padding:6px 10px;border-radius:5px;line-height:1.55;box-shadow:0 4px 16px rgba(0,0,0,.45)}
   .hp-track{display:inline-block;width:150px;height:12px;border:1px solid #000;background:#3a0d0d;vertical-align:middle;margin-left:6px;border-radius:2px;overflow:hidden}
   .hp-fill{height:100%;background:linear-gradient(#e23b3b,#8b1a1a);transition:width .12s}
+  .player-nickname{margin-top:4px;color:#c4b98f;display:flex;align-items:center;gap:6px;pointer-events:auto;text-shadow:1px 1px 0 #000}
+  #nicknameValue{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f0e9d6}
+  #nicknameEditBtn{cursor:pointer;background:rgba(232,194,90,.12);border:1px solid rgba(232,194,90,.45);color:var(--gold);border-radius:4px;padding:1px 6px;font:12px/1.4 "Courier New",monospace}
+  #nicknameEditBtn:hover{background:rgba(232,194,90,.24)}
   .oph-fill{background:linear-gradient(#7fd4ee,#2a7fa5)}
   #timer{color:#ff5a5a;font-weight:bold}
   #ammoRow{color:#c9b6f0}
@@ -126,6 +130,7 @@
     <div id="hud" class="hidden">
       <div class="box">
         哈姆雷特 <span class="hp-track"><span id="playerHp" class="hp-fill" style="width:100%"></span></span>
+        <div class="player-nickname">昵称 <span id="nicknameValue">待命名</span><button id="nicknameEditBtn" type="button" title="修改昵称">✏️ 改名</button></div>
         <div id="ophRow" style="display:none">奥菲莉亚 <span class="hp-track"><span id="ophHp" class="hp-fill oph-fill" style="width:100%"></span></span> <span style="color:#7fd4ee">随从</span></div>
         <div id="ammoRow" style="display:none;margin-top:2px">🏹 亡魂之弓 <b id="ammoVal">8</b>/<span id="ammoMax">8</span> <span id="ammoCd" style="color:#7f8797;font-size:11px"></span> <span style="color:#8f7fb0;font-size:11px">[F/Z 远程]</span></div>
         <div id="levelLabel" style="margin-top:2px;color:#c4b98f">第一幕</div>
