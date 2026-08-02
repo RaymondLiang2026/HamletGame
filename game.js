@@ -41,6 +41,9 @@ let poisonT = 0;                     // 终章溺死路线：哈姆雷特中毒�
 let laertesDefeated = false;         // 终章中段 Boss 雷欧提斯是否已被击败
 let opheliaWounded = false;          // 生还线第五幕：奥菲莉亚替挡毒剑后倒下
 let ghostOpheliaFinale = false;      // 生还线最终战：亡魂奥菲莉亚半透明助战
+// 终章最终战（克劳迪奥）画面特效状态（帧驱动，禁止 setInterval/setTimeout）
+let finalLightning = { next:0, flashes:0, nextFlash:0, boltUntil:0, segs:[] };
+let finalBossEntryFrame = -1;        // 克劳迪奥进场暗化特效起始 frame，-1 表示未触发
 
 /* -------------------------------------------------------------------------
    1. 工具函数
@@ -205,18 +208,173 @@ const Sound = {
       this.blip(440,.28,'sawtooth',.09,.05,110);
     } catch {}
   },
+  // ---- 通用合成助手（供 ≥3s 角色个性音效使用）----
+  // 灵活振荡器：freq 可为常量或 [起,止] 做指数扫频；env 定义包络；dest 可指定连接节点（默认 sfx gain）
+  voiceOsc(o){ if(!this.ctx||!this.enabled) return null;
+    const t=this.ctx.currentTime+(o.when||0), dur=o.dur||1;
+    const osc=this.ctx.createOscillator(), g=this.ctx.createGain();
+    osc.type=o.type||'sine';
+    if(Array.isArray(o.f)){ osc.frequency.setValueAtTime(o.f[0],t); osc.frequency.exponentialRampToValueAtTime(Math.max(1,o.f[1]),t+dur); }
+    else osc.frequency.setValueAtTime(o.f,t);
+    if(o.vib){ // 颤音：额外 LFO 调制主频
+      const lfo=this.ctx.createOscillator(), lg=this.ctx.createGain();
+      lfo.frequency.value=o.vib.rate||6; lg.gain.value=o.vib.depth||6;
+      lfo.connect(lg); lg.connect(osc.frequency); lfo.start(t); lfo.stop(t+dur+.05);
+    }
+    const vol=o.vol||.2, atk=o.atk||.04, rel=o.rel||dur*.4;
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol,t+atk);
+    g.gain.setValueAtTime(vol,t+Math.max(atk,dur-rel));
+    g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    if(o.dist){ const ws=this.ctx.createWaveShaper(); ws.curve=this.distCurve(o.dist); ws.oversample='2x'; osc.connect(ws); ws.connect(g); }
+    else osc.connect(g);
+    g.connect(o.dest||this.sg);
+    osc.start(t); osc.stop(t+dur+.05);
+    return g;
+  },
+  distCurve(k){ const n=256, c=new Float32Array(n), deg=Math.PI/180;
+    for(let i=0;i<n;i++){ const x=i*2/n-1; c[i]=(3+k)*x*20*deg/(Math.PI+k*Math.abs(x)); } return c; },
+  // 带反馈的延迟链，返回可作为 dest 的输入节点（用于回响/空灵效果）
+  makeEcho(time,fb,when){ if(!this.ctx||!this.enabled) return this.sg;
+    const inp=this.ctx.createGain(), d=this.ctx.createDelay(1.0), fbg=this.ctx.createGain(), wet=this.ctx.createGain();
+    d.delayTime.value=time; fbg.gain.value=fb; wet.gain.value=.9;
+    inp.connect(this.sg); inp.connect(d); d.connect(fbg); fbg.connect(d); d.connect(wet); wet.connect(this.sg);
+    return inp;
+  },
+  // 持续白噪声（带滤波），用于环境/军鼓等，dur 秒
+  noiseBed(dur,vol,filterType,freq,q,when){ if(!this.ctx||!this.enabled) return;
+    const t=this.ctx.currentTime+(when||0), n=Math.floor(this.ctx.sampleRate*dur);
+    const b=this.ctx.createBuffer(1,n,this.ctx.sampleRate), dt=b.getChannelData(0);
+    for(let i=0;i<n;i++) dt[i]=Math.random()*2-1;
+    const s=this.ctx.createBufferSource(); s.buffer=b;
+    const f=this.ctx.createBiquadFilter(); f.type=filterType||'bandpass'; f.frequency.value=freq||600; if(q)f.Q.value=q;
+    const g=this.ctx.createGain();
+    g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+.15);
+    g.gain.setValueAtTime(vol,t+dur*.7); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    s.connect(f); f.connect(g); g.connect(this.sg); s.start(t); s.stop(t+dur+.02);
+  },
+  // ================= 各角色 ≥3s 个性音效 =================
+  // 老哈姆雷特鬼魂：低沉回响警告声（100-200Hz，渐强后渐弱，加回响，3s）
+  voiceGhost(){ this.safe(function(){ const echo=this.makeEcho(.28,.4);
+    this.voiceOsc({type:'sine', f:[100,150], dur:3.0, vol:.30, atk:.9, rel:1.4, dest:echo});
+    this.voiceOsc({type:'triangle', f:[200,120], dur:3.0, vol:.14, atk:1.1, rel:1.5, dest:echo});
+    this.noiseBed(3.0,.05,'lowpass',180,4);
+    this.voiceOsc({type:'sine', f:66, dur:3.0, vol:.10, atk:1.2, rel:1.4});
+  }); },
+  // 波洛涅斯（伪装小丑）：喜剧性木管上行 400→700，后接 2s 泡泡音（≈3s）
+  voicePolonius(){ this.safe(function(){
+    [400,500,600,700].forEach((f,i)=>this.voiceOsc({type:'triangle', f:f, dur:.22, vol:.20, atk:.02, rel:.12, when:i*.16}));
+    // 泡泡：随机快速短促上滑音，覆盖 ~2s
+    for(let i=0;i<16;i++){ const w=.75+i*.12+Math.random()*.04, bf=360+Math.random()*520;
+      this.voiceOsc({type:'sine', f:[bf,bf*1.7], dur:.13, vol:.12, atk:.01, rel:.09, when:w}); }
+  }); },
+  // 克劳迪奥：威胁性低音铜管（50-150Hz，锯齿波，3s 渐强）
+  voiceClaudius(){ this.safe(function(){
+    this.voiceOsc({type:'sawtooth', f:[50,150], dur:3.0, vol:.28, atk:2.2, rel:.6});
+    this.voiceOsc({type:'sawtooth', f:[75,225], dur:3.0, vol:.12, atk:2.4, rel:.6}); // 五度叠加
+    this.noiseBed(3.0,.04,'lowpass',140,2);
+  }); },
+  // 雷欧提斯：剑鸣（2000→800Hz 渐降，加短混响，3s 由金属余韵填满）
+  voiceLaertes(){ this.safe(function(){ const echo=this.makeEcho(.16,.42);
+    this.voiceOsc({type:'triangle', f:[2000,800], dur:.5, vol:.22, atk:.005, rel:.4, dest:echo});
+    this.voiceOsc({type:'sine', f:[3000,1200], dur:.5, vol:.12, atk:.005, rel:.4, dest:echo}); // 泛音
+    this.noiseBed(.18,.10,'highpass',2600,6);
+    // 金属余韵：递减的高频铃音铺满剩余 ~2.5s
+    [1600,1300,1050,880].forEach((f,i)=>this.voiceOsc({type:'triangle', f:f, dur:.9-i*.12, vol:.09-i*.015, atk:.01, rel:.7, when:.5+i*.55, dest:echo}));
+  }); },
+  // 霍拉旭：温和弦乐（440+550Hz 正弦和声，3s 渐入渐出）
+  voiceHoratio(){ this.safe(function(){
+    this.voiceOsc({type:'sine', f:440, dur:3.0, vol:.16, atk:1.1, rel:1.3});
+    this.voiceOsc({type:'sine', f:550, dur:3.0, vol:.13, atk:1.2, rel:1.3}); // 大三度和声
+    this.voiceOsc({type:'triangle', f:330, dur:3.0, vol:.08, atk:1.3, rel:1.3});
+  }); },
+  // 英格兰刺客队长：军鼓节奏（噪声 + 低通，0.2s 一击，持续 3s）
+  voiceAssassin(){ this.safe(function(){
+    let w=0; for(let i=0;i<15;i++){ const accent=(i%4===0); this.noiseBed(.16, accent?.22:.13,'lowpass', accent?260:200, 1, w);
+      if(accent) this.voiceOsc({type:'sine', f:90, dur:.14, vol:.14, atk:.005, rel:.1, when:w}); w+=.2; }
+  }); },
+  // ================= 奥菲莉亚三态：脚步 / 笑声 / 环境音 =================
+  // 脚步：normal 轻柔优雅高频短促；punk 急促（由调用侧随机间隔控制）；ghost 无
+  opheliaStep(mode){ this.safe(function(){
+    if(mode==='ghost') return;
+    if(mode==='punk'){ this.voiceOsc({type:'square', f:[520,300], dur:.09, vol:.10, atk:.004, rel:.06}); this.noise(.04,.05,0,900); }
+    else { this.voiceOsc({type:'triangle', f:[760,620], dur:.15, vol:.07, atk:.01, rel:.1}); }
+  }); },
+  // 笑声：normal 轻柔女声笑声；punk 失真疯笑；ghost 空灵回响疯笑（均 ≥3s，严格按规格合成）
+  opheliaLaugh(mode){
+    if(!this.ctx || this.ctx.state!=='running' || !this.enabled) return;   // 必须 running 才触发
+    const ac=this.ctx, t0=ac.currentTime;
+    if(mode==='normal'){
+      // sine 520Hz + LFO 6Hz(±30Hz)；3 个 0.25s 脉冲(0→0.3→0)，间隔 0.1s；余音淡出，总 ≥3s
+      const osc=ac.createOscillator(), g=ac.createGain();
+      const lfo=ac.createOscillator(), lg=ac.createGain();
+      osc.type='sine'; osc.frequency.setValueAtTime(520,t0);
+      lfo.type='sine'; lfo.frequency.setValueAtTime(6,t0); lg.gain.setValueAtTime(30,t0);
+      lfo.connect(lg); lg.connect(osc.frequency);
+      g.gain.setValueAtTime(0.0001,t0);
+      let tp=t0;
+      for(let i=0;i<3;i++){ g.gain.setValueAtTime(0.0001,tp); g.gain.linearRampToValueAtTime(0.3,tp+0.06); g.gain.linearRampToValueAtTime(0.0001,tp+0.25); tp+=0.35; }
+      g.gain.linearRampToValueAtTime(0.06,tp+0.1); g.gain.exponentialRampToValueAtTime(0.0001,t0+3.1); // 余音淡出
+      osc.connect(g); g.connect(this.sg);
+      osc.start(t0); lfo.start(t0); osc.stop(t0+3.2); lfo.stop(t0+3.2);
+    } else if(mode==='punk'){
+      // sawtooth 380Hz + WaveShaper(200)；频率跳跃 380→620→280→500 各 0.3s(共1.2s)；后接 1.8s 余音，总 ≥3s
+      const osc=ac.createOscillator(), ws=ac.createWaveShaper(), g=ac.createGain();
+      ws.curve=this.distCurve(200); ws.oversample='2x';
+      osc.type='sawtooth';
+      const jumps=[380,620,280,500]; jumps.forEach((f,i)=>osc.frequency.setValueAtTime(f, t0+i*0.3));
+      osc.frequency.setValueAtTime(500, t0+1.2);
+      g.gain.setValueAtTime(0.0001,t0); g.gain.linearRampToValueAtTime(0.24,t0+0.05);
+      g.gain.setValueAtTime(0.24,t0+1.2); g.gain.exponentialRampToValueAtTime(0.0001,t0+3.0); // 1.8s 余音渐降
+      osc.connect(ws); ws.connect(g); g.connect(this.sg);
+      osc.start(t0); osc.stop(t0+3.1);
+    } else { // ghost
+      // sine 340Hz + DelayNode(0.45s, feedback 0.35, 约3次回响)；淡入1s/持续1s/淡出1s，总 ≥3s
+      const osc=ac.createOscillator(), g=ac.createGain();
+      const d=ac.createDelay(1.0), fb=ac.createGain(), wet=ac.createGain();
+      d.delayTime.setValueAtTime(0.45,t0); fb.gain.setValueAtTime(0.35,t0); wet.gain.setValueAtTime(0.7,t0);
+      osc.type='sine'; osc.frequency.setValueAtTime(340,t0);
+      osc.frequency.linearRampToValueAtTime(300,t0+3.0);
+      g.gain.setValueAtTime(0.0001,t0); g.gain.linearRampToValueAtTime(0.22,t0+1.0);
+      g.gain.setValueAtTime(0.22,t0+2.0); g.gain.linearRampToValueAtTime(0.0001,t0+3.0);
+      osc.connect(g); g.connect(this.sg); g.connect(d); d.connect(fb); fb.connect(d); d.connect(wet); wet.connect(this.sg);
+      osc.start(t0); osc.stop(t0+3.1);
+    }
+  },
+  // 环境音：normal 轻微宫廷弦乐氛围；punk 失真电吉他风噪音；ghost 空灵哼唱
+  opheliaAmbient(mode){ this.safe(function(){
+    if(mode==='punk'){ // 低沉失真噪音铺底 3s
+      this.noiseBed(3.2,.05,'bandpass',420,2.5);
+      this.voiceOsc({type:'sawtooth', f:[110,104], dur:3.2, vol:.06, atk:1.0, rel:1.2, dist:12});
+    } else if(mode==='ghost'){ // 空灵哼唱：正弦 350Hz 极低音量缓慢颤动
+      this.voiceOsc({type:'sine', f:350, dur:3.4, vol:.06, atk:1.2, rel:1.4, vib:{rate:2.5,depth:6}});
+      this.voiceOsc({type:'sine', f:525, dur:3.4, vol:.03, atk:1.4, rel:1.4});
+    } else { // normal 轻微宫廷弦乐氛围（低音量持续和声）
+      this.voiceOsc({type:'triangle', f:294, dur:3.2, vol:.05, atk:1.1, rel:1.3});
+      this.voiceOsc({type:'sine', f:392, dur:3.2, vol:.045, atk:1.2, rel:1.3});
+    }
+  }); },
+  // 奥菲莉亚笑声/疯笑防重叠：返回是否成功触发（占用 dur 秒）
+  _voiceBusyUntil:0,
+  now(){ return this.ctx?this.ctx.currentTime:0; },
+  tryLaugh(mode,dur){ if(!this.ctx || this.ctx.state!=='running' || !this.enabled) return false;
+    const t=this.ctx.currentTime; if(t<this._voiceBusyUntil) return false;
+    this._voiceBusyUntil=t+(dur||3.2); this.opheliaLaugh(mode); return true;
+  },
   safe(fn){ try { this.unlock(); if(this.enabled && typeof fn==='function') fn.call(this); } catch {} },
   characterCue(kind){ this.safe(function(){
     const cues={
       hamlet:()=>{ [262,330,392].forEach((f,i)=>this.blip(f,.18,'sawtooth',.18,i*.08)); },
-      ghost:()=>{ this.blip(55,.9,'sine',.34,0,42); this.blip(110,1.1,'triangle',.18,.08,70); this.noise(.7,.08,.05,120); },
-      ophelia:()=>{ [523,659,784].forEach((f,i)=>this.blip(f,.16,'triangle',.14,i*.09)); },
-      punkOphelia:()=>{ this.punkGlitch(); this.blip(880,.14,'sawtooth',.18,0,160); },
-      ghostOphelia:()=>{ this.noise(.5,.09,0,260); [392,523,784].forEach((f,i)=>this.blip(f,.45,'sine',.10,i*.12)); },
-      clown:()=>{ [880,1175,740].forEach((f,i)=>this.bellHit(f,i*.08,.12)); },
-      laertes:()=>{ this.noise(.08,.12,0,2200); this.blip(1760,.12,'triangle',.15,0,920); },
-      claudius:()=>{ [130,196,262].forEach((f,i)=>this.blip(f,.28,'sawtooth',.22,i*.1)); },
-      assassin:()=>{ this.noise(.16,.16,0,1800); this.blip(1200,.08,'triangle',.12,0,360); }
+      ghost:()=>this.voiceGhost(),                 // 老哈姆雷特鬼魂 ≥3s
+      ophelia:()=>this.opheliaLaugh('normal'),      // 正常奥菲莉亚出场：轻柔笑声
+      punkOphelia:()=>this.opheliaLaugh('punk'),    // 朋克奥菲莉亚出场：失真疯笑
+      ghostOphelia:()=>this.opheliaLaugh('ghost'),  // 亡魂奥菲莉亚出场：空灵疯笑
+      clown:()=>this.voicePolonius(),               // 波洛涅斯（小丑）≥3s
+      polonius:()=>this.voicePolonius(),
+      laertes:()=>this.voiceLaertes(),              // 雷欧提斯 ≥3s
+      claudius:()=>this.voiceClaudius(),            // 克劳迪奥 ≥3s
+      horatio:()=>this.voiceHoratio(),              // 霍拉旭 ≥3s
+      assassin:()=>this.voiceAssassin()             // 英格兰刺客队长 ≥3s
     };
     (cues[kind]||(()=>{}))();
   }); },
@@ -232,6 +390,42 @@ const Sound = {
       claudiusHeavy:()=>{ this.noise(.22,.18,0,180); this.blip(88,.36,'sawtooth',.28,0,55); }
     };
     (cues[kind]||(()=>{}))();
+  }); },
+  // ---- Boss 待机音（≥3s 标志性音，各 Boss 独特）----
+  bossIdle(kind){ this.safe(function(){
+    if(kind==='ghostking'){ this.voiceGhost(); }                       // 低沉哼鸣回响
+    else if(kind==='clown'){ this.voicePolonius(); }                   // 夸张哈哈笑
+    else if(kind==='assassin'){                                        // 金属铠甲碰撞
+      [0,0.14,0.3,0.55,0.9,1.3].forEach((w,i)=>{ this.noise(.08,.13,w,2600); this.blip(240-i*14,.09,'square',.10,w,110); });
+      this.noiseBed(1.6,.05,'bandpass',1800,3,0);
+    }
+    else if(kind==='laertes'){                                         // 毒剑嗡嗡（低频颤动）
+      this.voiceOsc({type:'sawtooth', f:210, dur:3.0, vol:.10, atk:.5, rel:1.1, vib:{rate:22,depth:16}, dist:6});
+      this.voiceOsc({type:'sawtooth', f:315, dur:3.0, vol:.05, atk:.6, rel:1.1, vib:{rate:22,depth:10}});
+    }
+    else if(kind==='claudius'){                                        // 威压深呼吸（吸-呼）
+      this.noiseBed(1.4,.12,'lowpass',300,2,0);
+      this.noiseBed(1.6,.14,'lowpass',200,2,1.5);
+      this.voiceOsc({type:'sine', f:[70,55], dur:3.2, vol:.10, atk:1.2, rel:1.4});
+    }
+  }); },
+  // ---- Boss 移动音（按步频触发；鬼魂无脚步改低频风声）----
+  bossMove(kind){ this.safe(function(){
+    if(kind==='ghostking'){ this.noise(.16,.05,0,240); this.voiceOsc({type:'sine', f:[80,60], dur:.24, vol:.05, atk:.02, rel:.16}); }
+    else if(kind==='clown'){ this.blip(200,.08,'square',.10,0,120); this.noise(.05,.06,0,1400); }
+    else if(kind==='assassin'){ this.noise(.06,.10,0,1800); this.blip(150,.08,'square',.10,0,90); }
+    else if(kind==='laertes'){ this.noise(.05,.07,0,1600); this.blip(240,.06,'triangle',.08,0,160); }
+    else if(kind==='claudius'){ this.noise(.07,.10,0,500); this.blip(90,.12,'sawtooth',.12,0,55); }
+    else { this.noise(.05,.06,0,1500); }
+  }); },
+  // ---- Boss 攻击挥击音 ----
+  bossAttack(kind){ this.safe(function(){
+    this.swing();
+    if(kind==='claudius') this.blip(120,.14,'sawtooth',.14,0,70);
+    else if(kind==='laertes') this.blip(1400,.10,'triangle',.12,0,600);
+    else if(kind==='ghostking') this.blip(180,.14,'sine',.12,0,90);
+    else if(kind==='assassin') this.noise(.06,.10,0,2200);
+    else if(kind==='clown') this.blip(500,.10,'square',.12,0,300);
   }); },
   // ---- 过场短曲 ----
   jingle(name){
@@ -306,6 +500,38 @@ const Sound = {
   });
 })();
 
+// ---- 终章双结局 BGM 生成器（长序列使一轮循环 ≥30s）----
+// tuples: [freq, dur, bassFreq]；freq/bassFreq 为 0 表示休止
+function _seqFromTuples(tuples){
+  const seq=[], bass=[];
+  for(const tp of tuples){ const f=tp[0], d=tp[1]||1, bf=tp[2]||0;
+    seq.push(d!==1?{f,d}:{f}); bass.push(bf); }
+  return { seq, bass };
+}
+// hero（生还线）：怪物猎人式恢弘交响，铜管三连音上行 + 弦乐拨奏 + 定音鼓，BPM≈140，A→B→A
+function _buildHeroMusic(){
+  const A=[[N.A4,1,N.A2],[N.C5,1,N.A2],[N.E5,1,N.A2],[N.A5,2,N.A2],[N.G5,1,N.E2],[N.E5,1,N.E2],[N.C5,2,N.C3],
+           [N.F4,1,N.F2],[N.A4,1,N.F2],[N.C5,1,N.F2],[N.F5,2,N.F2],[N.E5,1,N.C3],[N.C5,1,N.C3],[N.A4,2,N.A2]];
+  const B=[[N.C5,1,N.C3],[N.E5,1,N.C3],[N.G5,1,N.C3],[N.C6,2,N.C3],[N.B4,1,N.G2],[N.G5,1,N.G2],[N.E5,2,N.E2],
+           [N.D5,1,N.D3],[N.F5,1,N.D3],[N.A5,1,N.D3],[N.G5,2,N.G2],[N.E5,1,N.C3],[N.C5,1,N.C3],[N.D5,2,N.G2]];
+  const coda=[[N.A5,4,N.A2],[N.A4,4,N.A2]];
+  const tuples=[].concat(A,A,B,B,A,A,B,B,A,coda);
+  const {seq,bass}=_seqFromTuples(tuples);
+  return { tempo:.18, wave:'sawtooth', bassWave:'square', brass:true, choir:true,
+    perc:[1,0,0,1,0,0,1,0,1,0,0,1], seq, bass };
+}
+// imperial（溺死线）：帝国进行曲式低沉压迫，低音铜管 + 附点节奏(短-短-长) + 军鼓，BPM≈100
+function _buildImperialMusic(){
+  const A=[[N.A2,1,N.A2],[N.A2,1,N.A2],[N.A2,1,N.A2],[N.F2,1.5,N.F2],[N.C3,.5,N.C3],[N.A2,2,N.A2],
+           [N.F2,1.5,N.F2],[N.C3,.5,N.C3],[N.A2,2,N.A2]];
+  const B=[[N.E3,1,N.E2],[N.E3,1,N.E2],[N.E3,1,N.E2],[N.F3,1.5,N.F2],[N.C3,.5,N.C3],[N.Gs3,2,N.E2],
+           [N.F3,1.5,N.F2],[N.C3,.5,N.C3],[N.A3,2,N.A2]];
+  const tuples=[].concat(A,B,A,B,A,B,A,B,A,B,A,B);
+  const {seq,bass}=_seqFromTuples(tuples);
+  return { tempo:.24, wave:'sawtooth', bassWave:'square', brass:true,
+    perc:[1,0,0,1,0,0,1,1,0,0], seq, bass };
+}
+
 const MUSIC = {
   // 第一幕 城堡：中世纪宫廷，弦乐 + 鲁特琴（triangle 拨奏感）
   castle:{ tempo:.30, wave:'triangle', bassWave:'triangle',
@@ -323,14 +549,18 @@ const MUSIC = {
   lake:{ tempo:.15, wave:'triangle', bassWave:'sine', water:true,
     seq:[{f:N.E4},{f:N.G4},{f:N.E4},{f:N.A4},{f:N.E4},{f:N.G4},{f:N.C5},{f:N.B4},{f:N.A4},{f:N.G4},{f:N.A4},{f:N.E4},{f:N.D4},{f:N.E4}],
     bass:[N.A2,0,N.A2,0,N.F2,0,N.F2,0,N.C3,0,N.E2,0] },
-  // 第五幕 成功路线：英雄交响曲（铜管 + 合唱层次，怪物猎人式激昂宏大）
-  hero:{ tempo:.20, wave:'sawtooth', bassWave:'square', brass:true, choir:true, perc:[1,0,0,1,0,0,1,0,1,0,0,1],
-    seq:[{f:N.A4},{f:N.A4},{f:N.C5},{f:N.E5},{f:N.A5},{f:N.G5},{f:N.E5},{f:N.C5,d:2},{f:N.D5},{f:N.F5},{f:N.A5,d:2},{f:N.G5},{f:N.E5},{f:N.A4,d:2}],
-    bass:[N.A2,N.A2,N.A2,N.E2,N.F2,N.F2,N.C3,N.C3,N.D3,N.D3,N.G2,N.G2,N.A2,N.A2] },
-  // 第五幕 失败路线：帝国进行曲式压迫（低沉铜管、不祥节奏）
-  imperial:{ tempo:.24, wave:'sawtooth', bassWave:'square', brass:true, perc:[1,0,0,1,0,0,1,1,0,0],
-    seq:[{f:N.A3},{f:N.A3},{f:N.A3},{f:N.F3},{f:0,d:.5},{f:N.C4},{f:N.A3},{f:N.F3},{f:0,d:.5},{f:N.C4},{f:N.A3,d:2},{f:N.E4},{f:N.E4},{f:N.E4},{f:N.F4},{f:0,d:.5},{f:N.C4},{f:N.Gs3},{f:N.F3},{f:0,d:.5},{f:N.C4},{f:N.A3,d:2}],
-    bass:[N.A2,N.A2,N.A2,N.F2,N.F2,N.C3,N.A2,N.A2,N.F2,N.F2,N.C3,N.A2] },
+  // 第五幕 成功路线：英雄交响曲（怪物猎人式恢弘，≥30s 循环，A→B→A，见 _buildHeroMusic）
+  hero:_buildHeroMusic(),
+  // 第五幕 失败路线：帝国进行曲式压迫（低沉铜管、附点节奏、军鼓，≥30s 循环，见 _buildImperialMusic）
+  imperial:_buildImperialMusic(),
+  // 第一幕关底 恶灵先王：中世纪宫廷弦乐 + 低沉风琴，渐进紧张
+  wraith:{ tempo:.28, wave:'triangle', bassWave:'sine', organ:true, perc:[1,0,0,0,1,0,0,0],
+    seq:[{f:N.D4},{f:N.F4},{f:N.A4},{f:N.D5,d:2},{f:N.C5},{f:N.A4},{f:N.F4,d:2},{f:N.E4},{f:N.G4},{f:N.As4},{f:N.A4,d:2},{f:N.F4},{f:N.D4},{f:N.E4,d:2},{f:N.D4},{f:N.A4},{f:N.C5},{f:N.A4}],
+    bass:[N.D2,0,N.A2,0,N.F2,0,N.D2,0,N.E2,0,N.A2,0,N.D2,0,N.G2,0,N.A2,0] },
+  // 终章中段 雷欧提斯：悲壮弦乐、大提琴主旋律感（与 hero/imperial 明显不同）
+  lament:{ tempo:.30, wave:'triangle', bassWave:'sine', choir:true, perc:[1,0,0,0,0,0,1,0],
+    seq:[{f:N.A3},{f:N.C4},{f:N.E4},{f:N.D4,d:2},{f:N.C4},{f:N.B3},{f:N.A3,d:2},{f:N.E4},{f:N.G4},{f:N.F4},{f:N.E4,d:2},{f:N.D4},{f:N.C4},{f:N.E4,d:2},{f:N.A3},{f:N.E4},{f:N.D4},{f:N.C4,d:2}],
+    bass:[N.A2,0,N.E2,0,N.F2,0,N.A2,0,N.C3,0,N.E2,0,N.F2,0,N.E2,0,N.A2,0] },
   // Boss 通用（第五幕之前的高潮，如第三幕内室激战）
   boss:{ tempo:.17, wave:'sawtooth', bassWave:'square', perc:[1,0,1,0,1,0,1,0], brass:true,
     seq:[{f:N.A4},{f:N.C5},{f:N.E5},{f:N.C5},{f:N.A4},{f:N.F5},{f:N.E5},{f:N.C5},{f:N.D5},{f:N.F5},{f:N.A5},{f:N.G5},{f:N.E5},{f:N.C5}],
@@ -612,6 +842,14 @@ function drawWeatherParticles(){
    ------------------------------------------------------------------------- */
 function drawBackground(){
   const theme = ACTS[actIndex].theme;
+  // 第四幕 英格兰：专用精细化海景（天空/月光/云层/三层波浪/倒影/帆船/灯塔/前景岩礁）
+  if(actIndex===ACT_ENGLAND){
+    drawEnglandBackground(frame);
+    drawSceneDecorations();
+    drawWeatherParticles();
+    drawAmbientBg();
+    return;
+  }
   // 天空渐变
   let sky = theme.sky;
   if(darkMode && actIndex===ACT_FINAL) sky = ['#0a0710','#160a1c','#050308'];
@@ -660,10 +898,7 @@ function drawSceneDecorations(){
     for(let i=0;i<5;i++) drawDeadTreeDecor(70+i*180-nearOff%180, H*0.72, 52+((i%2)*22));
     for(let i=0;i<24;i++) drawGroundFlower((i*67-nearOff%67), H*0.78+Math.sin(i)*6, i);
   } else if(actIndex===ACT_ENGLAND){
-    drawSeaWaves(t);
-    drawRopeAndAnchor(110-nearOff%260, H*0.63, t);
-    drawRopeAndAnchor(470-nearOff%260, H*0.66, t+2);
-    drawRopeAndAnchor(830-nearOff%260, H*0.62, t+4);
+    // 英格兰海景已由 drawEnglandBackground 统一绘制（含波浪/帆船/灯塔），此处不再叠加旧的绳索/铁锚残留
   } else if(actIndex===ACT_FINAL){
     drawThrone(W/2-(camX*0.2%80), H*0.58, darkMode);
     for(let i=0;i<12;i++) drawSkullDecor(38+i*92-nearOff%92, H*0.79+Math.sin(i*1.7)*6, i);
@@ -690,11 +925,140 @@ function drawDeadTreeDecor(x,y,h){
 function drawGroundFlower(x,y,i){
   ctx.save(); ctx.translate(x,y); ctx.fillStyle=i%3?'rgba(210,64,130,.72)':'rgba(245,190,220,.7)'; for(let p=0;p<4;p++){ ctx.rotate(1.57); ctx.fillRect(0,-1,5,2); } ctx.fillStyle='rgba(180,140,50,.7)'; ctx.fillRect(-1,-1,2,2); ctx.restore();
 }
-function drawSeaWaves(t){
-  ctx.save(); ctx.strokeStyle='rgba(130,210,230,.42)'; ctx.lineWidth=2; for(let r=0;r<4;r++){ const y=H*.62+r*18; ctx.beginPath(); for(let x=-20;x<W+30;x+=18){ const wy=y+Math.sin(t*3+x*.035+r)*5; if(x<0)ctx.moveTo(x,wy); else ctx.lineTo(x,wy); } ctx.stroke(); } ctx.restore();
+/* ------- 第四幕 英格兰·流亡之路 精细化海景（全部由 frame 时间驱动，无 setInterval） ------- */
+let englandFx=null;
+function ensureEnglandFx(){
+  if(englandFx) return englandFx;
+  const clouds=[]; for(let i=0;i<5;i++){ clouds.push({ x:rand(-100,W+100), y:H*rand(0.06,0.34), s:rand(0.7,1.5), sp:rand(0.10,0.28), seed:rand(0,10) }); }
+  const ships=[]; for(let i=0;i<2;i++){ ships.push({ x:rand(W*0.2,W*0.8), sp:rand(0.10,0.20)*(i?-1:1), sc:rand(0.85,1.2), sails:1+(i%2) }); }
+  const sparkles=[]; for(let i=0;i<10;i++){ sparkles.push({ fx:rand(0.05,0.95), fy:rand(0.02,0.9), ph:rand(0,6.28), sp:rand(0.06,0.16) }); }
+  englandFx={clouds,ships,sparkles};
+  return englandFx;
 }
-function drawRopeAndAnchor(x,y,t){
-  ctx.save(); ctx.strokeStyle='rgba(155,118,72,.65)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,22+Math.sin(t)*2,0.5,5.7); ctx.stroke(); ctx.strokeStyle='rgba(90,92,102,.72)'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(x+38,y-24); ctx.lineTo(x+38,y+32); ctx.moveTo(x+24,y+12); ctx.lineTo(x+52,y+12); ctx.arc(x+38,y+30,18,0.15,2.99); ctx.stroke(); ctx.restore();
+function drawEnglandBackground(t){
+  const fx=ensureEnglandFx();
+  const horizon=H*0.66;                     // 海平线：海面占下方约 1/3
+  const moonX=W*0.80, moonY=H*0.20, moonR=28;
+  // --- 天空渐变：深蓝→中蓝→近海平线蓝 ---
+  const g=ctx.createLinearGradient(0,0,0,horizon);
+  g.addColorStop(0,'#050d1a'); g.addColorStop(0.55,'#0d2040'); g.addColorStop(1,'#1a3a5c');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,horizon);
+  // --- 月亮外圈三层光晕 ---
+  [[75,0.05],[55,0.09],[40,0.14]].forEach(([r,a])=>{ ctx.fillStyle='rgba(230,240,255,'+a+')'; ctx.beginPath(); ctx.arc(moonX,moonY,r,0,6.283); ctx.fill(); });
+  // --- 月光锥：月亮向海面延伸的半透明锥形 ---
+  ctx.save(); ctx.fillStyle='rgba(255,255,255,0.05)';
+  ctx.beginPath(); ctx.moveTo(moonX-moonR*0.6,moonY); ctx.lineTo(moonX+moonR*0.6,moonY);
+  ctx.lineTo(moonX+70,horizon); ctx.lineTo(moonX-70,horizon); ctx.closePath(); ctx.fill(); ctx.restore();
+  // --- 月亮本体 ---
+  ctx.fillStyle='#f4f8ff'; ctx.beginPath(); ctx.arc(moonX,moonY,moonR,0,6.283); ctx.fill();
+  ctx.fillStyle='rgba(210,225,245,0.5)'; ctx.beginPath(); ctx.arc(moonX+8,moonY-4,6,0,6.283); ctx.fill(); // 环形山暗斑
+  // --- 云层：4-6 个不规则多边形，缓慢横向漂移 ---
+  fx.clouds.forEach(c=>{
+    const cx=((c.x + t*c.sp) % (W+240)) - 120;
+    drawEnglandCloud(cx, c.y, c.s, c.seed);
+  });
+  // --- 远景帆船：海平线处缓慢漂移的深色剪影 ---
+  fx.ships.forEach(s=>{
+    let sx=(s.x + t*s.sp);
+    const span=W+160; sx=((sx%span)+span)%span - 80;
+    drawEnglandShip(sx, horizon-2, s.sc, s.sails);
+  });
+  // --- 中景：右侧英格兰港口灯塔 ---
+  drawLighthouse(W*0.16 - (camX*0.2)%40, horizon, t);
+  // --- 海面三层波浪 ---
+  ctx.fillStyle='#0a1e35'; ctx.fillRect(0,horizon,W,H-horizon);   // 海底基色
+  drawWaveLayer(horizon+6,  4, 0.010, 0.6, '#0a1e35', t);          // 底层：低频慢速
+  drawWaveLayer(horizon+22, 5, 0.020, 1.1, '#0d2a4a', t);          // 中层
+  drawWaveHighlight(horizon+14, 3, 0.045, 2.0, 'rgba(100,160,220,0.4)', t); // 顶层高光：高频快速
+  // --- 月光倒影：月亮正下方竖向光柱，高度随波浪抖动 ---
+  ctx.save();
+  const beamW=24, jitter=Math.sin(t*0.12)*6;
+  const bg=ctx.createLinearGradient(0,horizon,0,H);
+  bg.addColorStop(0,'rgba(255,255,255,0.24)'); bg.addColorStop(1,'rgba(255,255,255,0.04)');
+  ctx.fillStyle=bg;
+  for(let y=horizon; y<H; y+=6){ const w=beamW*(0.6+0.4*Math.sin(t*0.1+y*0.08))+jitter*0.2; ctx.fillRect(moonX-w/2, y, w, 4); }
+  ctx.restore();
+  // --- 碎波光点：随机散布小白点，随机闪烁 ---
+  ctx.save();
+  fx.sparkles.forEach(sp=>{
+    const px=sp.fx*W, py=horizon + sp.fy*(H-horizon);
+    const a=0.15+0.35*Math.max(0,Math.sin(t*sp.sp+sp.ph));
+    ctx.fillStyle='rgba(220,240,255,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(px,py,1+ (sp.ph%1>0.5?1:0),0,6.283); ctx.fill();
+  });
+  ctx.restore();
+  // --- 前景：底部岩礁/码头石块 + 苔藓绿点缀 ---
+  drawEnglandRocks();
+}
+function drawEnglandCloud(cx, cy, s, seed){
+  ctx.save(); ctx.fillStyle='rgba(200,220,255,0.15)';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx+22*s, cy-8*s);
+  ctx.lineTo(cx+48*s, cy-6*s+Math.sin(seed)*3);
+  ctx.lineTo(cx+72*s, cy-10*s);
+  ctx.lineTo(cx+96*s, cy-2*s);
+  ctx.lineTo(cx+84*s, cy+6*s);
+  ctx.lineTo(cx+40*s, cy+8*s);
+  ctx.lineTo(cx+12*s, cy+6*s);
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function drawEnglandShip(sx, sy, sc, sails){
+  ctx.save(); ctx.translate(sx,sy); ctx.scale(sc,sc); ctx.fillStyle='#0a1628';
+  // 船体：梯形，底宽约 34
+  ctx.beginPath(); ctx.moveTo(-17,0); ctx.lineTo(17,0); ctx.lineTo(12,7); ctx.lineTo(-12,7); ctx.closePath(); ctx.fill();
+  // 桅杆
+  ctx.fillRect(-1,-30,2,30);
+  // 帆：1-2 个三角形
+  ctx.beginPath(); ctx.moveTo(1,-28); ctx.lineTo(15,-6); ctx.lineTo(1,-6); ctx.closePath(); ctx.fill();
+  if(sails>1){ ctx.beginPath(); ctx.moveTo(-1,-24); ctx.lineTo(-13,-6); ctx.lineTo(-1,-6); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function drawLighthouse(x, groundY, t){
+  ctx.save();
+  const h=90, w=20, topY=groundY-h;
+  // 塔身：石塔轮廓
+  ctx.fillStyle='#1a2a3a';
+  ctx.beginPath(); ctx.moveTo(x-w/2, groundY); ctx.lineTo(x-w*0.32, topY); ctx.lineTo(x+w*0.32, topY); ctx.lineTo(x+w/2, groundY); ctx.closePath(); ctx.fill();
+  // 石墙纹理：短横线密集排列模拟砖石
+  ctx.strokeStyle='rgba(90,120,150,0.35)'; ctx.lineWidth=1;
+  for(let yy=topY+6; yy<groundY-2; yy+=5){ const ww=(w*0.32 + (yy-topY)/h*w*0.18); ctx.beginPath(); ctx.moveTo(x-ww,yy); ctx.lineTo(x+ww,yy); ctx.stroke(); }
+  // 灯室
+  ctx.fillStyle='#25384a'; ctx.fillRect(x-8, topY-12, 16, 12);
+  ctx.fillStyle='#141f2a'; ctx.fillRect(x-10, topY-16, 20, 4); // 檐
+  // 顶部橙黄光点：周期性闪烁
+  const glow=0.5+0.5*Math.sin(t*0.08);
+  ctx.fillStyle='rgba(255,180,70,'+(0.4+0.5*glow).toFixed(3)+')';
+  ctx.beginPath(); ctx.arc(x, topY-6, 3, 0, 6.283); ctx.fill();
+  const lg=ctx.createRadialGradient(x,topY-6,1,x,topY-6,22); lg.addColorStop(0,'rgba(255,190,90,'+(0.35*glow).toFixed(3)+')'); lg.addColorStop(1,'rgba(255,190,90,0)');
+  ctx.fillStyle=lg; ctx.beginPath(); ctx.arc(x,topY-6,22,0,6.283); ctx.fill();
+  ctx.restore();
+}
+function drawWaveLayer(yBase, amp, freq, speed, color, t){
+  ctx.fillStyle=color; ctx.beginPath(); ctx.moveTo(0,H); ctx.lineTo(0,yBase);
+  for(let x=0;x<=W;x+=8){ const y=yBase+Math.sin(x*freq + t*0.03*speed)*amp; ctx.lineTo(x,y); }
+  ctx.lineTo(W,H); ctx.closePath(); ctx.fill();
+}
+function drawWaveHighlight(yBase, amp, freq, speed, color, t){
+  ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.beginPath();
+  for(let x=0;x<=W;x+=6){ const y=yBase+Math.sin(x*freq + t*0.03*speed)*amp; if(x===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.stroke(); ctx.restore();
+}
+function drawEnglandRocks(){
+  ctx.save();
+  const off=(camX*0.7)%260, baseY=H-4;
+  ctx.fillStyle='#1a1a2a';
+  for(let bx=-off-60; bx<W+120; bx+=210){
+    ctx.beginPath();
+    ctx.moveTo(bx, H); ctx.lineTo(bx+6, baseY-18); ctx.lineTo(bx+34, baseY-26);
+    ctx.lineTo(bx+70, baseY-14); ctx.lineTo(bx+108, baseY-22); ctx.lineTo(bx+150, baseY-10);
+    ctx.lineTo(bx+180, baseY-20); ctx.lineTo(bx+210, H); ctx.closePath(); ctx.fill();
+    // 苔藓绿点缀
+    ctx.fillStyle='#2d4a2d';
+    ctx.fillRect(bx+30, baseY-24, 4, 3); ctx.fillRect(bx+66, baseY-13, 3, 3); ctx.fillRect(bx+120, baseY-19, 4, 2);
+    ctx.fillStyle='#1a1a2a';
+  }
+  ctx.restore();
 }
 function drawThrone(x,y,doom){
   ctx.save(); ctx.fillStyle=doom?'rgba(42,24,54,.82)':'rgba(82,54,24,.82)'; ctx.fillRect(x-48,y-100,96,124); ctx.fillStyle=doom?'rgba(92,58,112,.72)':'rgba(200,150,60,.7)'; ctx.fillRect(x-54,y-108,108,12); for(let i=0;i<5;i++) ctx.fillRect(x-42+i*21,y-132,10,28); ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(x-34,y-72,68,68); ctx.restore();
@@ -831,21 +1195,29 @@ const ACTS = [
    act:0..4  stage 决定服装/面部/磨损/色彩；pose 决定姿态帧
    ------------------------------------------------------------------------- */
 function hamletStyle(act){
-  // 依据幕数返回造型参数
+  // 依据幕数返回造型参数（每幕色调与细节标志明显区分）
   const S = {
     coat:'#141018', coatHi:'#2a2236', coatShadow:'#0a070d', trim:'#3a3348',
     epaulet:'#8a7a4a', hair:'#241c18', skin:'#c9a98c', skinShade:'#a3805f',
-    eye:'#e8dcc0', accent:'#e8c25a', wear:0, wet:false, gold:false, doom:false, cape:false
+    eye:'#e8dcc0', accent:'#e8c25a', wear:0, wet:false, gold:false, doom:false, cape:false,
+    court:false, torn:false, naval:false, hairHi:null, tense:0
   };
-  if(act>=1){ S.coat='#161020'; S.trim='#4a3a58'; S.epaulet='#9a8850'; S.skinShade='#9a7050'; }
-  if(act>=2){ S.coat='#120c1a'; S.wear=1; S.hair='#1c1512'; S.eye='#f0e4c8'; S.cape=true; }
-  if(act===ACT_LAKE){ S.coat='#0e0a16'; S.wear=2; S.wet=true; S.coatHi='#241c30'; }
-  if(act===ACT_ENGLAND){ // 英格兰：异域海旅战服，风尘仆仆
-    S.wear=2; S.coat='#122028'; S.coatHi='#1e3640'; S.coatShadow='#08131a'; S.trim='#3a6a6a'; S.epaulet='#7a9a8a'; S.accent='#7fe0c8'; S.eye='#e8f0e0';
+  // 第一幕 城堡：基础黑色简洁战服，偏灰冷调
+  if(act===ACT_CASTLE){ S.coat='#14141c'; S.coatHi='#2c3040'; S.coatShadow='#0a0a10'; S.trim='#33384a'; S.epaulet='#7e7c6a'; S.skin='#c2a488'; }
+  // 第二幕 宫廷：宫廷外套细节 + 金色纽扣，颜色稍暖，头发有纹理
+  if(act===ACT_COURT){ S.coat='#1c1424'; S.coatHi='#3a2c42'; S.trim='#5a4462'; S.epaulet='#b09a52'; S.skin='#d2b190'; S.skinShade='#a8825e'; S.hair='#2a1e16'; S.hairHi='#4a3420'; S.eye='#f0e4c8'; S.court=true; }
+  // 第三幕 逃亡：战服破损，灰尘泥土，表情紧绷
+  if(act===ACT_ESCAPE){ S.coat='#131019'; S.coatHi='#241d2c'; S.trim='#42364e'; S.epaulet='#8a7c5a'; S.hair='#1c1512'; S.skin='#b89a7c'; S.skinShade='#8a6a4c'; S.eye='#ede0c4'; S.wear=2; S.torn=true; S.tense=1; }
+  if(act===ACT_LAKE){ S.coat='#0e0a16'; S.wear=2; S.wet=true; S.coatHi='#241c30'; S.cape=true; }
+  // 第四幕 英格兰：航海风斗篷（深蓝外层），整体蓝灰，风尘仆仆
+  if(act===ACT_ENGLAND){
+    S.wear=2; S.naval=true; S.tense=1;
+    S.coat='#16222e'; S.coatHi='#25404e'; S.coatShadow='#0a141c'; S.trim='#3a6a72'; S.epaulet='#7a9aa0'; S.accent='#7fe0c8'; S.eye='#e8f0e0'; S.skin='#bfa588'; S.skinShade='#8c6f52';
   }
+  // 第五幕 最终决战：成功=金色明亮 / 失败=暗紫破损
   if(act===ACT_FINAL){
     S.cape=true; S.wear=2;
-    if(opheliaSaved && !darkMode){ S.gold=true; S.coat='#181022'; S.trim='#c9a24a'; S.epaulet='#e8c25a'; S.coatHi='#2e2440'; S.eye='#fff4d0'; }
+    if(opheliaSaved && !darkMode){ S.gold=true; S.coat='#1c1226'; S.trim='#c9a24a'; S.epaulet='#e8c25a'; S.coatHi='#3a2c4e'; S.eye='#fff4d0'; S.accent='#ffe08a'; }
     else { S.doom=true; S.coat='#0a0710'; S.trim='#4a2a5c'; S.epaulet='#5a4a6a'; S.hair='#181018'; S.skin='#a890a0'; S.skinShade='#6a5070'; S.eye='#c0a8d0'; S.coatHi='#1a1020'; S.wear=3; }
   }
   return S;
@@ -882,6 +1254,27 @@ function drawHamlet(cx, cy, facing, pose, act){
   // 悲怆/失败光影
   if(S.doom){ ctx.save(); ctx.globalAlpha=0.5; const g=ctx.createRadialGradient(0,-24,2,0,-24,30); g.addColorStop(0,'rgba(120,60,150,0.4)'); g.addColorStop(1,'rgba(120,60,150,0)'); ctx.fillStyle=g; ctx.fillRect(-30,-54,60,54); ctx.restore(); }
   if(S.gold){ ctx.save(); ctx.globalAlpha=0.4+0.2*Math.sin(frame*0.08); const g=ctx.createRadialGradient(0,-26,2,0,-26,32); g.addColorStop(0,'rgba(232,194,90,0.35)'); g.addColorStop(1,'rgba(232,194,90,0)'); ctx.fillStyle=g; ctx.fillRect(-32,-58,64,58); ctx.restore(); }
+
+  // 第四幕 航海斗篷：深蓝外层，边缘像素飘动（绘于身体后方）
+  if(S.naval){
+    const flut=Math.sin(t*0.18)*3, flut2=Math.cos(t*0.13)*2;
+    ctx.fillStyle='#12303e';
+    ctx.beginPath();
+    ctx.moveTo(-8, -46);
+    ctx.lineTo(7, -46);
+    ctx.lineTo(13+flut, -26);
+    ctx.lineTo(15+flut, -6);
+    ctx.lineTo(9+flut2, -2);
+    ctx.lineTo(2, -8);
+    ctx.lineTo(-6, -3);
+    ctx.lineTo(-13-flut, -8);
+    ctx.lineTo(-11, -30);
+    ctx.closePath(); ctx.fill();
+    // 斗篷内衬高光条与飘动像素边
+    ctx.fillStyle='#1e4658'; px(-9, -44, 3, 30, '#1e4658');
+    px(9+flut, -24, 3, 4, '#0c2028'); px(11+flut, -14, 2, 4, '#0c2028'); // 飘动边缘破碎像素
+    px(-12-flut, -22, 2, 4, '#0c2028');
+  }
 
   const baseY = -bob;
   // ---- 腿 ----
@@ -931,13 +1324,38 @@ function drawHamlet(cx, cy, facing, pose, act){
   px(-8+lean*0.4, torsoY, 2, 2, S.gold?'#fff0c0':'#c9b98a');
   px(8+lean*0.4, torsoY, 2, 2, S.gold?'#fff0c0':'#c9b98a');
 
-  // 递进式服饰细节：随幕数增加装饰（第一幕简洁 → 终章最精细；成功路线金饰，失败路线暗紫破损）
-  const orn = S.gold? S.accent : (S.doom? '#6a3a7c' : S.trim);
-  if(act>=1){ px(-2+lean*0.4, torsoY-2, 4, 2, orn); }                          // 领口金属扣
-  if(act>=2){ px(-6+lean*0.4, torsoY+3, 12, 1, orn); px(-5+lean*0.4, torsoY+7, 11, 1, S.coatShadow); } // 胸前斜纹绶带
-  if(act>=3){ px(-10+lean*0.4, torsoY+3, 2, 4, orn); px(9+lean*0.4, torsoY+3, 2, 4, orn); }             // 肩部流苏
-  if(act>=4){ px(3+lean*0.4, torsoY+5, 3, 3, orn); px(4+lean*0.4, torsoY+6, 1, 1, S.gold?'#fff0c0':(S.doom?'#2a1030':'#1a1420')); } // 胸前勋章/纹章
-  if(S.doom && act>=5){ px(-4+lean*0.4, torsoY+10, 5, 1, '#2a0f30'); px(1+lean*0.4, torsoY+15, 3, 1, '#2a0f30'); } // 终章失败：破损裂纹
+  // 每幕差异化服饰细节（明显可辨，非仅调色）
+  // 第二幕 宫廷：金色纽扣（1-2 颗醒目）+ 暖色胸前绶带
+  if(S.court){
+    px(-2+lean*0.4, torsoY+3, 3, 3, '#e8c25a'); px(-2+lean*0.4, torsoY+9, 3, 3, '#e8c25a'); // 金纽扣
+    px(-1+lean*0.4, torsoY+4, 1, 1, '#fff0c0'); px(-1+lean*0.4, torsoY+10, 1, 1, '#fff0c0'); // 高光
+    px(-6+lean*0.4, torsoY+2, 12, 1, '#7a5a48'); // 暖色绶带
+  }
+  // 第三幕 逃亡：破损像素撕裂边 + 灰尘泥土斑点
+  if(S.torn){
+    px(6+lean*0.4, torsoY+9, 3, 2, S.coatShadow); px(7+lean*0.4, torsoY+11, 2, 3, S.coatShadow); // 下摆撕裂缺口
+    px(-7+lean*0.4, torsoY+14, 2, 2, S.coatShadow);
+    px(-4+lean*0.4, torsoY+16, 3, 2, 'rgba(120,96,60,0.55)'); px(3+lean*0.4, torsoY+13, 2, 2, 'rgba(110,88,54,0.5)'); // 泥土
+    px(1+lean*0.4, torsoY+6, 2, 1, 'rgba(150,130,100,0.4)'); // 灰尘
+  }
+  // 第四幕 英格兰：航海勋章/锚形纹章 + 风化磨痕
+  if(S.naval){
+    px(2+lean*0.4, torsoY+5, 4, 4, '#9ab8be'); px(3+lean*0.4, torsoY+6, 2, 3, '#16222e'); // 锚形勋章
+    px(3+lean*0.4, torsoY+7, 2, 1, '#9ab8be');
+    px(-6+lean*0.4, torsoY+3, 11, 1, '#3a6a72'); // 海军斜纹
+    px(-5+lean*0.4, torsoY+11, 2, 2, 'rgba(150,175,180,0.35)'); // 盐渍风化
+  }
+  // 第五幕 成功：金边发光装甲；失败：暗紫破碎裂纹
+  if(S.gold){
+    px(-9+lean*0.4, torsoY-1, 6, 1, '#ffe08a'); px(6+lean*0.4, torsoY-1, 5, 1, '#ffe08a'); // 肩章金边
+    px(6+lean*0.4, torsoY, 2, 20, S.accent); px(-6+lean*0.4, torsoY+2, 1, 16, S.accent); // 盔甲金边
+    px(-2+lean*0.4, torsoY+4, 4, 1, '#fff0c0'); px(-2+lean*0.4, torsoY+9, 4, 1, '#fff0c0');
+  }
+  if(S.doom){
+    px(-5+lean*0.4, torsoY+6, 6, 1, '#2a0f30'); px(2+lean*0.4, torsoY+10, 4, 1, '#3a1540'); // 装甲裂纹
+    px(-6+lean*0.4, torsoY+15, 3, 2, S.coatShadow); px(5+lean*0.4, torsoY+13, 3, 3, S.coatShadow); // 破碎缺口
+    px(-3+lean*0.4, torsoY+2, 2, 4, '#4a2a5c');
+  }
 
   // ---- 手臂 & 武器 ----
   drawHamletArm(S, act, torsoY, baseY, lean, {atk,ranged,walk,jump,armSwing,t,pose});
@@ -960,12 +1378,20 @@ function drawHamlet(cx, cy, facing, pose, act){
   px(-8+lean*0.6, headY-2, 2, 3, S.hair);
   px(6+lean*0.6, headY-4, 3, 3, S.hair);
   if(S.wear>=2){ px(-9+lean*0.6, headY+1, 2, 4, S.hair); } // 更乱
+  if(S.hairHi){ // 第二幕 头发纹理高光
+    px(-5+lean*0.6, headY-2, 2, 4, S.hairHi); px(1+lean*0.6, headY-2, 2, 3, S.hairHi); px(4+lean*0.6, headY-1, 1, 3, S.hairHi);
+  }
   if(S.wet){ // 湿发效果：高光条
     ctx.fillStyle='rgba(150,180,210,0.5)'; px(-5+lean*0.6, headY-2, 2, 5, 'rgba(150,180,210,0.5)'); px(2+lean*0.6, headY-2, 2, 4, 'rgba(150,180,210,0.5)');
   }
-  // 眉头微锁
-  px(-4+lean*0.6, headY+4, 3, 1, '#1a120e');
-  px(1+lean*0.6, headY+4, 3, 1, '#1a120e');
+  // 眉头微锁（S.tense 时更紧绷：眉毛下压内聚）
+  if(S.tense){
+    px(-4+lean*0.6, headY+4, 4, 1, '#140d0a'); px(0+lean*0.6, headY+4, 4, 1, '#140d0a');
+    px(-1+lean*0.6, headY+3, 2, 1, '#140d0a'); // 眉间竖纹
+  } else {
+    px(-4+lean*0.6, headY+4, 3, 1, '#1a120e');
+    px(1+lean*0.6, headY+4, 3, 1, '#1a120e');
+  }
   // 眼睛（锐利忧郁）
   ctx.fillStyle=S.eye; px(-4+lean*0.6, headY+5, 3, 2, S.eye); px(2+lean*0.6, headY+5, 2, 2, S.eye);
   px(-2+lean*0.6, headY+5, 1, 2, '#1a1410'); px(3+lean*0.6, headY+5, 1, 2, '#1a1410'); // 瞳
@@ -1163,37 +1589,142 @@ function drawElite(e,t,w){ // 精英/小Boss：更大更华丽
 function drawOpheliaFigure(mode, t, wounded){
   const ghost = mode==='ghost';
   const punk = mode==='punk';
-  const sway=Math.sin(t*0.08)*2;
   if(wounded){ ctx.rotate(-0.72); ctx.translate(-8,10); }
   ctx.save();
-  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(0,0,14,3.5,0,0,6.283); ctx.fill();
+  // 影子
+  if(!ghost){ ctx.fillStyle='rgba(0,0,0,0.26)'; ctx.beginPath(); ctx.ellipse(0,0,13,3.3,0,0,6.283); ctx.fill(); }
+
   if(ghost){
-    ctx.globalAlpha=0.46+0.14*Math.sin(t*0.1);
-    const g=ctx.createRadialGradient(0,-32,2,0,-32,40); g.addColorStop(0,'rgba(225,248,255,0.78)'); g.addColorStop(1,'rgba(110,190,255,0)'); ctx.fillStyle=g; ctx.fillRect(-40,-72,80,82);
-    ctx.fillStyle='rgba(178,226,255,0.58)'; ctx.beginPath(); ctx.moveTo(-10,-19); ctx.quadraticCurveTo(0,-24,11,-19); ctx.lineTo(16+sway,4); ctx.lineTo(5,10); ctx.lineTo(-2,4); ctx.lineTo(-12,11); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle='rgba(220,248,255,0.72)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(-7,-50); ctx.bezierCurveTo(-18,-38,-17,-24,-11,-10); ctx.moveTo(8,-51); ctx.bezierCurveTo(20,-36,16,-20,11,-6); ctx.stroke();
-    ctx.fillStyle='rgba(220,246,255,0.78)'; ctx.beginPath(); ctx.ellipse(0,-43,6.2,7.5,0,0,6.283); ctx.fill();
-    ctx.fillStyle='rgba(36,58,80,0.7)'; ctx.fillRect(-3,-43,2,2); ctx.fillRect(2,-43,2,2);
-    ctx.strokeStyle='rgba(220,245,255,0.62)'; for(let r=11;r<31;r+=9){ ctx.beginPath(); ctx.arc(0,-4,r,0,Math.PI*2); ctx.stroke(); }
+    // === 亡魂奥菲莉亚（推倒重做）：淡蓝白宫廷长裙，飘逸长发，灵体呼吸光晕，平和微笑 ===
+    const breathe=0.75+0.10*Math.sin(t*0.035);   // 整体 alpha 0.65~0.85，周期≈3s
+    const hairFloat=Math.sin(t*0.052)*5;          // 发梢上下飘 ±5px，周期≈2s
+    const hemWave=Math.sin(t*0.06)*3;             // 裙摆底部上下波动
+    ctx.globalAlpha=breathe;
+    // 灵体发光：外扩轮廓光晕
+    ctx.save(); ctx.globalAlpha=breathe*0.6;
+    const glow=ctx.createRadialGradient(0,-28,4,0,-28,46);
+    glow.addColorStop(0,'rgba(200,225,255,0.5)'); glow.addColorStop(1,'rgba(184,212,255,0)');
+    ctx.fillStyle=glow; ctx.beginPath(); ctx.ellipse(0,-26,26,42,0,0,6.283); ctx.fill();
+    ctx.restore();
+    // 背后长直发（发梢向上飘），先画于身体后
+    ctx.fillStyle='#B8D4FF';
+    ctx.beginPath(); ctx.moveTo(-7,-45); ctx.quadraticCurveTo(-13,-30,-9,-15+hairFloat*0.5);
+    ctx.quadraticCurveTo(-6,-11+hairFloat,-4,-18); ctx.lineTo(-4,-44); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(7,-45); ctx.quadraticCurveTo(13,-30,9,-15-hairFloat*0.5);
+    ctx.quadraticCurveTo(6,-11-hairFloat,4,-18); ctx.lineTo(4,-44); ctx.closePath(); ctx.fill();
+    // 宫廷长裙（白/淡蓝），裙摆底部波动
+    ctx.fillStyle='#E8F0FF';
+    ctx.beginPath(); ctx.moveTo(-6,-34); ctx.lineTo(6,-34); ctx.lineTo(13,-2+hemWave*0.4);
+    ctx.quadraticCurveTo(8,2+hemWave,4,-1); ctx.quadraticCurveTo(0,3-hemWave,-4,-1);
+    ctx.quadraticCurveTo(-8,2+hemWave,-13,-2+hemWave*0.4); ctx.closePath(); ctx.fill();
+    // 裙身阴影
+    ctx.fillStyle='#B0C8E8';
+    ctx.beginPath(); ctx.moveTo(2,-34); ctx.lineTo(6,-34); ctx.lineTo(11,-2); ctx.lineTo(5,-2); ctx.closePath(); ctx.fill();
+    // 束腰 / 胸衣
+    px(-6,-35,12,3,'#D8E4FF');
+    // 手臂（袖）与手
+    px(-8,-33,3,12,'#E0EAFF'); px(5,-33,3,12,'#E0EAFF');
+    px(-8,-22,3,3,'#D0E8FF'); px(5,-22,3,3,'#D0E8FF');
+    // 颈
+    px(-2,-37,4,3,'#D0E8FF');
+    // 头（蓝白肤色）
+    ctx.fillStyle='#D0E8FF'; ctx.beginPath(); ctx.ellipse(0,-42,6,7.2,0,0,6.283); ctx.fill();
+    // 顶发中分
+    ctx.fillStyle='#B8D4FF';
+    ctx.beginPath(); ctx.moveTo(-7,-45); ctx.quadraticCurveTo(0,-53,7,-45); ctx.lineTo(5,-42); ctx.quadraticCurveTo(0,-47,-5,-42); ctx.closePath(); ctx.fill();
+    // 飘动发梢高光细丝
+    ctx.strokeStyle='#E8F4FF'; ctx.lineWidth=1.2; ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(-9,-15+hairFloat*0.5); ctx.quadraticCurveTo(-12,-7+hairFloat,-8,-3+hairFloat);
+    ctx.moveTo(9,-15-hairFloat*0.5); ctx.quadraticCurveTo(12,-7-hairFloat,8,-3-hairFloat);
+    ctx.stroke();
+    // 面部：半开目 + 平和微笑
+    ctx.fillStyle='#6090C0';
+    ctx.fillRect(-3.2,-43,1.8,1.4); ctx.fillRect(1.6,-43,1.8,1.4);
+    ctx.strokeStyle='#6090C0'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-2,-37.6); ctx.quadraticCurveTo(0,-36.4,2,-37.6); ctx.stroke();
+    // 腮部柔光
+    ctx.fillStyle='rgba(232,244,255,0.5)'; ctx.fillRect(-4.4,-40,1.5,1.5); ctx.fillRect(3,-40,1.5,1.5);
+    // 环绕散发的白色小光点（frame + i 驱动，淡入淡出，非随机计时）
+    for(let i=0;i<5;i++){
+      const tw=(Math.sin(frame*0.03+i*1.7)+1)*0.5;   // 0~1 淡入淡出
+      if(tw<0.15) continue;
+      const ang=i*1.4+frame*0.01, rr=15+(i%3)*6;
+      const sxp=Math.cos(ang)*rr*0.7, syp=-28+Math.sin(ang*1.3)*22;
+      ctx.globalAlpha=breathe*tw*0.9; ctx.fillStyle='#E8F4FF';
+      const sz=1+(i%2); ctx.fillRect(sxp,syp,sz,sz);
+    }
+    ctx.globalAlpha=1;
     ctx.restore(); return;
   }
-  ctx.fillStyle=punk?'#C9A0DC':'#d9d2e8'; ctx.beginPath(); ctx.moveTo(-10,-18); ctx.quadraticCurveTo(0,-22,10,-18); ctx.lineTo(15,0); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
+
   if(punk){
-    // 温柔朋克：碎花裙淡紫/玫瑰金/白，配色柔和不恐怖；凌乱鲜花编发（浅黄/粉），眼影淡紫，表情迷离
-    ctx.fillStyle='#B98FCF'; ctx.beginPath(); ctx.moveTo(-8,-32); ctx.lineTo(-12,-8); ctx.lineTo(-5,-16); ctx.lineTo(1,-7); ctx.lineTo(6,-16); ctx.lineTo(12,-8); ctx.lineTo(8,-32); ctx.closePath(); ctx.fill();
-    px(-9,-18,5,13,'#E8A0A0'); px(3,-18,5,13,'#C9A0DC'); px(-1,-17,3,17,'#F3B6C6');
-    ['#F3B6C6','#F5D97A','#F5EEF7'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.fillRect(-8+i*6,-13+i%2*4,4,3); });
-    ['#F5D97A','#F3B6C6','#FFF6C0','#FFFFFF'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.beginPath(); ctx.arc(-8+i*5,-45+(i%2)*2,2.4,0,6.283); ctx.fill(); });
-  } else {
-    ctx.fillStyle='#efe3d2'; ctx.beginPath(); ctx.moveTo(-11,-18); ctx.lineTo(11,-18); ctx.lineTo(14,0); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
-    px(-6,-31,12,16,'#cfd9ed'); px(4,-31,2,16,'#f3eef5');
-    ctx.fillStyle='#5b3a2b'; ctx.beginPath(); ctx.moveTo(-9,-43); ctx.quadraticCurveTo(0,-51,9,-43); ctx.lineTo(8,-31); ctx.quadraticCurveTo(1,-34,-8,-31); ctx.closePath(); ctx.fill();
-    px(6,-42,3,13,'#5b3a2b'); px(-8,-40,3,12,'#6f4734');
+    // === 朋克奥菲莉亚（推倒重做，朋克妆造，绝非和服/日式）===
+    // 腿部：黑色渔网裤袜（斜线纹）
+    px(-6,-14,4,14,'#1a1a1a'); px(2,-14,4,14,'#1a1a1a');
+    ctx.strokeStyle='rgba(90,90,90,0.6)'; ctx.lineWidth=0.8;
+    for(let yy=-13; yy<-1; yy+=3){ ctx.beginPath(); ctx.moveTo(-6,yy); ctx.lineTo(-2,yy+3); ctx.moveTo(2,yy); ctx.lineTo(6,yy+3); ctx.stroke(); }
+    // 黑色厚底靴
+    px(-7,-2,5,3,'#0d0d0d'); px(2,-2,5,3,'#0d0d0d');
+    // 碎花短裙（深紫底 + 白色小花纹）
+    ctx.fillStyle='#7a4a7a'; ctx.beginPath(); ctx.moveTo(-8,-22); ctx.lineTo(8,-22); ctx.lineTo(11,-12); ctx.lineTo(-11,-12); ctx.closePath(); ctx.fill();
+    [[-7,-19],[-2,-15],[3,-19],[7,-14],[0,-20]].forEach(([fx,fy])=>{ ctx.fillStyle='#f0e8f0'; ctx.fillRect(fx,fy,2,2); });
+    // 黑色紧身上衣（深 V）
+    px(-6,-32,12,11,'#2a2a2a');
+    ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.moveTo(-4,-32); ctx.lineTo(4,-32); ctx.lineTo(0,-24); ctx.closePath(); ctx.fill(); // 深 V 领
+    // 深灰皮革短外套（带翻领）
+    ctx.fillStyle='#484848';
+    px(-8,-32,3,13,'#484848'); px(5,-32,3,13,'#484848'); // 外套两襟
+    ctx.beginPath(); ctx.moveTo(-8,-32); ctx.lineTo(-4,-30); ctx.lineTo(-5,-27); ctx.lineTo(-8,-28); ctx.closePath(); ctx.fill(); // 左翻领
+    ctx.beginPath(); ctx.moveTo(8,-32); ctx.lineTo(4,-30); ctx.lineTo(5,-27); ctx.lineTo(8,-28); ctx.closePath(); ctx.fill();  // 右翻领
+    px(6,-38,3,3,'#e8c8d8'); // 手（露出）
+    // 颈部：细黑项链/颈环
+    px(-3,-33,6,1.4,'#0d0d0d'); px(-1,-32,2,1,'#c23b73');
+    // 腕部皮环
+    px(6,-30,3,1.4,'#3a2a2a');
+    // 头（偏苍白面颊 #F0E8F0）
+    ctx.fillStyle='#f0e8f0'; ctx.beginPath(); ctx.ellipse(0,-42,6,7.2,0,0,6.283); ctx.fill();
+    // 利落黑色短发（#1A1A1A）+ 受光高光 #404040，不规则侧分凌乱多缕
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath(); ctx.moveTo(-7,-44); ctx.quadraticCurveTo(-4,-53,3,-51); ctx.quadraticCurveTo(9,-50,8,-42); ctx.lineTo(7,-40); ctx.lineTo(4,-46); ctx.lineTo(1,-40); ctx.lineTo(-2,-47); ctx.lineTo(-5,-40); ctx.closePath(); ctx.fill(); // 凌乱刘海缺口
+    px(-8,-46,3,8,'#1a1a1a'); px(6,-46,3,7,'#1a1a1a'); // 两侧短发（利落，不过肩）
+    px(-6,-49,2,3,'#404040'); px(1,-50,2,3,'#404040'); // 受光高光缕
+    px(4,-47,1.5,3,'#404040');
+    // 发间小花（淡黄/粉，3-4 个小方块）
+    ctx.fillStyle='#f5d97a'; ctx.fillRect(-6,-50,2,2); ctx.fillStyle='#f3b6c6'; ctx.fillRect(0,-52,2,2); ctx.fillStyle='#f5d97a'; ctx.fillRect(5,-49,2,2); ctx.fillStyle='#f3b6c6'; ctx.fillRect(-3,-51,1.6,1.6);
+    // 妆容：紫色眼影扩散 + 深玫红唇
+    ctx.fillStyle='rgba(139,92,246,0.75)'; ctx.fillRect(-4,-44,3,2.4); ctx.fillRect(2,-44,3,2.4);
+    ctx.fillStyle='#1a1a1a'; ctx.fillRect(-3.4,-43,1.6,1.6); ctx.fillRect(2,-43,1.6,1.6); // 眼
+    ctx.fillStyle='#C23B73'; ctx.fillRect(-2,-37,4,1.6); // 深玫红唇
+    ctx.restore(); return;
   }
-  ctx.fillStyle=punk?'#e4c4d0':'#f3d8bd'; ctx.beginPath(); ctx.ellipse(0,-39,6,7.5,0,0,6.283); ctx.fill();
-  if(punk){ ctx.fillStyle='rgba(178,143,207,.85)'; ctx.fillRect(-4,-40,3,2); ctx.fillRect(2,-40,3,2); ctx.fillStyle='#E29A9A'; ctx.fillRect(-3,-34,6,1.5); }
-  else { ctx.fillStyle='#3a2a28'; ctx.fillRect(-4,-40,2,2); ctx.fillRect(3,-40,2,2); ctx.fillStyle='#ba6f72'; ctx.fillRect(-2,-34,4,1.3); }
-  px(7,-27,3,3,punk?'#e4c4d0':'#f3d8bd');
+
+  // === 正常奥菲莉亚（第二幕）：琥珀棕长发 + 米白宫廷裙，暖色柔和 ===
+  // 米白宫廷裙 + 2-3 层裙摆
+  ctx.fillStyle='#F5F0E0';
+  ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(6,-30); ctx.lineTo(15,0); ctx.lineTo(-15,0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(198,186,156,0.75)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(-11,-6); ctx.quadraticCurveTo(0,-10,11,-6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-13,-2); ctx.quadraticCurveTo(0,-6,13,-2); ctx.stroke();
+  px(-6,-31,12,3,'#E8DFC6'); // 束腰
+  // V 领
+  ctx.fillStyle='#EDE3CB'; ctx.beginPath(); ctx.moveTo(-5,-33); ctx.lineTo(5,-33); ctx.lineTo(0,-27); ctx.closePath(); ctx.fill();
+  // 手臂（米白袖）+ 手（暖粉）
+  px(-9,-28,3,10,'#F0E6D0'); px(6,-28,3,10,'#F0E6D0');
+  px(-9,-19,3,3,'#FFDAB9'); px(6,-19,3,3,'#FFDAB9');
+  // 左腕浅色手链（点线）
+  ctx.fillStyle='#FFF8E0'; ctx.fillRect(-9,-20,3,1); ctx.fillStyle='#E9DFC2'; ctx.fillRect(-9,-18.5,3,1);
+  // 头（暖粉肤色）
+  ctx.fillStyle='#FFDAB9'; ctx.beginPath(); ctx.ellipse(0,-42,6,7.2,0,0,6.283); ctx.fill();
+  // 长直发中分，琥珀棕 #A0522D，垂过肩，发梢稍弯
+  ctx.fillStyle='#A0522D';
+  ctx.beginPath(); ctx.moveTo(-7,-45); ctx.quadraticCurveTo(0,-52,7,-45); ctx.lineTo(5,-43); ctx.quadraticCurveTo(0,-47,-5,-43); ctx.closePath(); ctx.fill(); // 顶发+中分
+  ctx.beginPath(); ctx.moveTo(-7,-46); ctx.quadraticCurveTo(-12,-32,-8,-20); ctx.quadraticCurveTo(-5,-17,-5,-22); ctx.quadraticCurveTo(-6,-34,-4,-44); ctx.closePath(); ctx.fill(); // 左长发
+  ctx.beginPath(); ctx.moveTo(7,-46); ctx.quadraticCurveTo(12,-32,8,-20); ctx.quadraticCurveTo(5,-17,5,-22); ctx.quadraticCurveTo(6,-34,4,-44); ctx.closePath(); ctx.fill(); // 右长发
+  px(-9,-24,2,4,'#B5673A'); px(7,-24,2,4,'#B5673A'); // 发梢高光
+  // 眼 + 微笑（唇 #E9967A）
+  ctx.fillStyle='#3a2a28'; ctx.fillRect(-3.2,-43,1.6,2); ctx.fillRect(2,-43,1.6,2);
+  ctx.strokeStyle='#E9967A'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(-2.4,-37.4); ctx.quadraticCurveTo(0,-35.8,2.4,-37.4); ctx.stroke();
   ctx.restore();
 }
 
@@ -2764,13 +3295,13 @@ function makeCompanion(kind){
     facing:1, onGround:false, hp:80, maxHp:80, active:true, atkT:0, atkCd:0, shootCd:60, invuln:0 };
 }
 const BOSSDEF = {
-  ghostking:{ name:'恶灵 · 老哈姆雷特国王', label:'恶灵先王 · THE WRAITH KING', w:48,h:98, phases:3, hp:170, music:'boss', summon:true, ranged:'spectral', dash:false, ult:false },
+  ghostking:{ name:'恶灵 · 老哈姆雷特国王', label:'恶灵先王 · THE WRAITH KING', w:48,h:98, phases:3, hp:170, music:'wraith', summon:true, ranged:'spectral', dash:false, ult:false },
   clown:    { name:'小丑 · 波洛涅斯',       label:'小丑波洛涅斯 · THE FOOL',     w:44,h:90, phases:2, hp:120, music:'palace', summon:false, ranged:'throw', dash:true, ult:false },
   rosencrantz:  { name:'罗森格兰兹',        label:'罗森格兰兹 · ROSENCRANTZ',    w:40,h:86, phases:1, hp:90,  music:'boss', summon:false, ranged:'arrow', dash:false, ult:false, midboss:true },
   guildenstern: { name:'吉尔登斯顿',        label:'吉尔登斯顿 · GUILDENSTERN',   w:40,h:86, phases:1, hp:100, music:'boss', summon:false, ranged:false, dash:true,  ult:false, midboss:true },
   assassin: { name:'英格兰雇佣刺客队长',    label:'刺客队长 · ASSASSIN CAPTAIN', w:44,h:92, phases:2, hp:180, music:'england', summon:true, ranged:'dagger', dash:true, ult:false },
-  laertes:  { name:'雷欧提斯',              label:'雷欧提斯 · LAERTES（毒剑）',  w:42,h:90, phases:1, hp:150, music:'boss', summon:false, ranged:false, dash:true, ult:false, poisonBlade:true, midboss:true },
-  claudius: { name:'克劳迪奥',              label:'克劳迪奥 · CLAUDIUS',         w:44,h:90, phases:3, get hp(){return opheliaSaved?210:240;}, get music(){return opheliaSaved?'hero':'boss';}, summon:true, ranged:'poison', dash:true, ult:true, final:true }
+  laertes:  { name:'雷欧提斯',              label:'雷欧提斯 · LAERTES（毒剑）',  w:42,h:90, phases:1, hp:150, music:'lament', summon:false, ranged:false, dash:true, ult:false, poisonBlade:true, midboss:true },
+  claudius: { name:'克劳迪奥',              label:'克劳迪奥 · CLAUDIUS',         w:44,h:90, phases:3, get hp(){return opheliaSaved?210:240;}, get music(){return opheliaSaved?'hero':'imperial';}, summon:true, ranged:'poison', dash:true, ult:true, final:true }
 };
 function makeBoss(kind){
   const D=BOSSDEF[kind]; const hp=D.hp;
@@ -3254,15 +3785,21 @@ function startBoss(entry){
   boss=makeBoss(entry.kind);
   const D=boss.def;
   let mus = D.music || 'boss';
-  if(entry.final) mus = opheliaSaved?'hero':'boss';
+  if(entry.final) mus = opheliaSaved?'hero':'imperial';
+  const isFinalClaudius = entry.final && entry.kind==='claudius';
+  if(isFinalClaudius){                     // 克劳迪奥进场：暗化特效 + 电闪状态复位
+    finalBossEntryFrame=frame; finalLightning.next=frame+70; finalLightning.boltUntil=0; finalLightning.flashes=0;
+  }
   if(entry.final){
     ghostOpheliaFinale = opheliaSaved && opheliaWounded;
     if(ghostOpheliaFinale){ companion=null; Sound.characterCue('ghostOphelia'); }
   }
-  Sound.setMusic(mus, 1.1);
+  // 出场前以较低强度起 BGM（过场阶段 ~2s 淡入观感），Boss 正式开打再提升
+  Sound.setMusic(mus, entry.final?0.45:1.1);
   const intro = BOSS_INTRO[entry.kind] || [];
   showStory(intro, ()=>{
     state=STATE.PLAY;
+    if(entry.final) Sound.setMusic(mus, 1.2);   // 开打提升音量/音层
     addFloater(boss.x+boss.w/2, boss.y-20, 'BOSS 战 · '+D.name, ACTS[actIndex].accent||'#e8c25a', 16);
     const cue={ghostking:'ghost', clown:'clown', assassin:'assassin', laertes:'laertes', claudius:'claudius'}[entry.kind];
     if(cue) Sound.characterCue(cue);
@@ -3333,6 +3870,7 @@ function updateBoss(){
   b.facing=px<ex?-1:1;
   const d=Math.abs(px-ex);
   const solids=solidsList();
+  bossIdleMoveSfx(b);
   // 接触伤害
   if(!player.dead && player.invuln<=0 && rectsOverlap(player,b)) damagePlayer(b.phase>=3?11:7, ex);
   // 计时
@@ -3341,7 +3879,7 @@ function updateBoss(){
   // 移动逼近
   if(b.state!=='dash'){ b.vx += (px<ex?-1:1)* (b.phase>=2?0.14:0.1); b.vx=clamp(b.vx,-(1.3+b.phase*0.3),(1.3+b.phase*0.3)); }
   // 近战
-  if(d<64 && b.atkCd<=0){ b.atkT=22; b.atkCd = b.phase>=2?54:70; }
+  if(d<64 && b.atkCd<=0){ b.atkT=22; b.atkCd = b.phase>=2?54:70; Sound.bossAttack(b.kind); }
   if(b.atkT===10){ const hb=b.facing>0?{x:b.x+b.w,y:b.y,w:52,h:b.h}:{x:b.x-52,y:b.y,w:52,h:b.h}; if(!player.dead&&player.invuln<=0&&rectsOverlap(hb,player)) damagePlayer(b.phase>=3?12:8, ex); }
   // 召唤喽啰（具 summon 能力者）
   if(D.summon && b.phase===1 && b.summonCd<=0 && enemies.length<4){ b.summonCd=260; summonMinions(); }
@@ -3357,6 +3895,21 @@ function updateBoss(){
   stepPhysics(b, solids);
   const minX=(level.bossArena?level.bossArena.x:0)-40;
   b.x=clamp(b.x, minX, level.width-b.w);
+}
+// Boss 待机音（各自周期）与移动音（按步频）：用 Sound.ctx.currentTime 做周期调度，禁止 setInterval
+// 时间戳挂在 boss 对象上，boss=null 时自然失效，无泄漏
+function bossIdleMoveSfx(b){
+  if(!(Sound.ctx && Sound.ctx.state==='running' && Sound.enabled)) return;
+  const now=Sound.ctx.currentTime;
+  // 待机音：各 Boss 独立周期（秒）
+  const period={ghostking:15, assassin:8, laertes:6, claudius:9, clown:7, rosencrantz:10, guildenstern:10}[b.kind]||12;
+  if(b.idleNextT===undefined) b.idleNextT=now+2+Math.random()*2;
+  if(now>=b.idleNextT){ b.idleNextT=now+period+Math.random()*3; Sound.bossIdle(b.kind); }
+  // 移动音：Boss 有明显水平位移时按步频触发（鬼魂在 bossMove 内改为低频风声）
+  if(Math.abs(b.vx)>0.6 && b.onGround){
+    if(b.stepNextT===undefined) b.stepNextT=0;
+    if(now>=b.stepNextT){ b.stepNextT=now+clamp(0.36-Math.abs(b.vx)*0.03,0.14,0.36); Sound.bossMove(b.kind); }
+  }
 }
 function summonMinions(){
   Sound.blip(120,.4,'sawtooth',.3,0,60); shake(4,8);
@@ -3713,6 +4266,12 @@ function updatePlay(){
   }
   // Boss 计划驱动（城堡/宫廷/英格兰关底 + 终章雷欧提斯&克劳迪奥）
   if(level.bossPlan){ updateBossPlan(); }
+  // 终章生还版：亡魂奥菲莉亚助战——空灵疯笑（10-15s）+ 空灵哼唱环境音
+  if(ghostOpheliaFinale && boss && boss.kind==='claudius' && !boss.dead){
+    if(!level._ghostOph) level._ghostOph={};
+    level._ghostOph.x = boss.x+boss.w/2-58;
+    scheduleOpheliaAudio(level._ghostOph,'ghost',false);
+  }
   // 阴郁模式环境（终章失败路线）
   if(actIndex===ACT_FINAL && darkMode){
     if(frame%40===0){ crows.push({x:camX-30,y:camY+rand(20,120),vx:rand(1.2,2.2),flap:0}); }
@@ -3732,8 +4291,10 @@ function updatePunkOphelia(){
   // 局部徘徊：跨度收窄，峰值速度 ≈ 0.5*span*phaseInc = 0.5*900*0.010 = 4.5px/帧 ≈ 1.3x 正常速度（不超 2x）
   const span=Math.min(900, Math.max(360, level.width*0.16));
   const nextX = po.baseX + (Math.sin(po.phase)*0.5+0.5)*span;
+  const moving=Math.abs(nextX-po.x)>0.6;
   po.dir = nextX>=po.x ? 1 : -1;
   po.x = nextX;
+  scheduleOpheliaAudio(po,'punk',moving);
   po.lineT--; if(po.lineT<=0){ po.lineT=220;
     const madLines=[
       {zh:'他死了，去了，小姐……', en:'He is dead and gone, lady.'},
@@ -3744,7 +4305,7 @@ function updatePunkOphelia(){
     ];
     po.lineI=(po.lineI+1)%madLines.length;
     const screenX=(po.x-camX)*ZOOM;
-    if(screenX>W*0.34 && screenX<W*0.66){ const line=madLines[po.lineI]; addFloater(po.x, GROUND_TOP-92, line.zh+' / '+line.en, '#C9A0DC', 11); Sound.battleCue('punkLaugh'); }
+    if(screenX>W*0.34 && screenX<W*0.66){ const line=madLines[po.lineI]; addFloater(po.x, GROUND_TOP-92, line.zh+' / '+line.en, '#C9A0DC', 11); }
   }
 }
 // 第二幕背景：正常形象奥菲莉亚（宫廷裙装）缓慢温柔徘徊，仅作场景 NPC 装饰，不参与战斗
@@ -3754,9 +4315,50 @@ function updateCourtOphelia(){
   // 峰值速度 ≈ 0.5*span*phaseInc = 0.5*560*0.006 = 1.68px/帧 ≈ 0.5x 正常速度（温柔飘逸 0.4-0.6x）
   const span=Math.min(560, Math.max(300, level.width*0.11));
   const nextX = co.baseX + (Math.sin(co.phase)*0.5+0.5)*span;
+  const moving=Math.abs(nextX-co.x)>0.4;
   co.dir = nextX>=co.x ? 1 : -1;
   co.x = nextX;
+  scheduleOpheliaAudio(co,'normal',moving);
 }
+// 奥菲莉亚三态音效调度：脚步（切换态触发不重叠）/ 笑声（随机定时）/ 环境音（循环）/ 朋克疯语吟诵
+// 全部用 Sound.now()(=AudioContext.currentTime) 管理，笑声经 Sound.tryLaugh 防重叠。
+function scheduleOpheliaAudio(o, mode, moving){
+  if(!Sound.enabled || !Sound.ctx || Sound.ctx.state!=='running') return;  // 必须 running 才调度
+  const now=Sound.now();
+  // 仅当角色在画面内才发声，避免离屏噪音
+  const sx=(o.x-camX)*ZOOM; const onScreen = sx>-40 && sx<W+40;
+  if(o._aNext===undefined){
+    o._aStep=now+0.4; o._aAmb=now+0.6;
+    o._aLaugh=now + laughGap(mode);
+    o._aChant=now + 15; o._aNext=1;
+  }
+  if(!onScreen){ // 离屏时推迟笑声计时，避免回到画面时一次性补触发
+    if(o._aLaugh - now > 20) o._aLaugh = now + laughGap(mode);
+    return;
+  }
+  // 笑声/疯笑倒计时提示（调试友好）：随机定时，经 tryLaugh 防重叠，dur 对齐 3s+ 音效实长
+  const laughDur = mode==='punk'?3.1:(mode==='ghost'?3.1:3.2);
+  // 环境音循环（约 3s 一段）
+  if(now>=o._aAmb){ Sound.opheliaAmbient(mode); o._aAmb=now + (mode==='punk'?3.0:(mode==='ghost'?3.4:3.1)); }
+  // 脚步：normal 每 ~0.15s；punk 急促不规则 0.1-0.2s；ghost 无脚步
+  if(moving && mode!=='ghost' && now>=o._aStep){
+    Sound.opheliaStep(mode);
+    o._aStep = now + (mode==='punk'? (0.1+Math.random()*0.1) : 0.15);
+  }
+  // 笑声/疯笑：随机定时，经 tryLaugh 防重叠
+  if(now>=o._aLaugh){
+    if(Sound.tryLaugh(mode, laughDur)){
+      o._aLaugh = now + laughGap(mode);
+    } else { o._aLaugh = now + 0.5; } // 被占用则稍后重试
+  }
+  // 朋克疯语吟诵：高频颤音，每 15s
+  if(mode==='punk' && now>=o._aChant){
+    Sound.safe(function(){ this.voiceOsc({type:'sine', f:450, dur:3.0, vol:.10, atk:.2, rel:1.0, vib:{rate:8,depth:20}}); });
+    o._aChant = now + 15;
+  }
+}
+// 各态笑声随机间隔：normal 8-14s，punk 6-10s，ghost 10-16s
+function laughGap(mode){ return mode==='punk'?rand(6,10):(mode==='ghost'?rand(10,16):rand(8,14)); }
 
 function finishBonus(){
   if(!bonusLevel || level.bonusFinished) return;
@@ -3830,6 +4432,8 @@ function render(){
     ctx.restore();
     // 前景氛围（屏幕空间）
     drawForeground();
+    // 最终战（克劳迪奥）画面特效：电闪雷鸣 / 狂风骤雨 / 进场暗化（世界之后、UI 之前，屏幕空间）
+    drawFinalBattleFx();
     // 屏幕闪光
     if(flashT>0){ ctx.fillStyle=flashColor; ctx.globalAlpha=clamp(flashT/16,0,1); ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; }
     if(poisonT>0) drawPoisonSpreadOverlay();
@@ -4069,6 +4673,68 @@ function drawForeground(){
   drawSegmentBanner();
 }
 function worldToScreen(wx,wy){ return { x:(wx-camX)*ZOOM, y:(wy-camY)*ZOOM }; }
+// 最终 Boss（克劳迪奥）画面特效：电闪雷鸣 / 狂风骤雨 / 进场暗化。屏幕空间绘制，帧驱动无定时器。
+function drawFinalBattleFx(){
+  if(!(boss && boss.kind==='claudius' && !boss.dead && state===STATE.PLAY)) return;
+  const now=frame;
+  ctx.save();
+  // ---- 进场暗化：约 2s（120 帧）从画面中央向外扩散的黑色遮罩，alpha 由高到低 ----
+  if(finalBossEntryFrame>=0){
+    const el=now-finalBossEntryFrame;
+    if(el<120){
+      const p=el/120, a=0.72*(1-p), r=W*0.14+p*W*0.78;
+      const g=ctx.createRadialGradient(W/2,H/2,r*0.15,W/2,H/2,r);
+      g.addColorStop(0,'rgba(0,0,0,'+a.toFixed(3)+')'); g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    } else finalBossEntryFrame=-1;
+  }
+  // ---- 狂风骤雨：80~120 条斜雨线，随 frame 向右下循环移动 ----
+  ctx.strokeStyle='rgba(150,200,255,0.3)'; ctx.lineWidth=1;
+  for(let i=0;i<100;i++){
+    const seed=i*97, spd=8+(i%3)*3;
+    const x=((seed*13)%W + now*spd*0.3)%W;
+    const y=((seed*29)%H + now*spd)%H;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+3,y+10); ctx.stroke();
+  }
+  // 左右边缘半透明灰色流动纹理（强风）
+  ctx.fillStyle='rgba(180,190,210,0.06)';
+  for(let s=0;s<6;s++){
+    const yy=((now*4+s*100)%(H+80))-40;
+    ctx.fillRect(0,yy,30,44);
+    ctx.fillRect(W-30,((now*4+s*100+50)%(H+80))-40,30,44);
+  }
+  // ---- 电闪雷鸣：每 random(2000,5000)ms（约 120~300 帧）触发一次，每次连闪 2~3 下 ----
+  if(now>=finalLightning.next){
+    finalLightning.next=now+randi(120,300);
+    finalLightning.flashes=randi(2,3);
+    finalLightning.nextFlash=now;
+  }
+  if(finalLightning.flashes>0 && now>=finalLightning.nextFlash){
+    finalLightning.flashes--;
+    const dur=randi(6,12);                       // 每次约 0.1~0.2s
+    finalLightning.nextFlash=now+dur+randi(2,6);
+    finalLightning.boltUntil=now+dur; finalLightning.boltDur=dur;
+    // 从画面顶部向下的随机折线
+    const segs=[]; let x=rand(W*0.2,W*0.8), y=0; segs.push([x,y]);
+    while(y<H*0.72){ y+=rand(30,60); x+=rand(-42,42); segs.push([clamp(x,0,W),y]); }
+    finalLightning.segs=segs;
+    if(Sound.ctx && Sound.ctx.state==='running' && Sound.enabled){ Sound.noise(0.5,0.18,0,120); Sound.blip(58,0.42,'sawtooth',0.12,0,38); }
+    shake(4,8);
+  }
+  if(now<finalLightning.boltUntil){
+    const segs=finalLightning.segs;
+    if(segs&&segs.length){
+      ctx.beginPath(); ctx.moveTo(segs[0][0],segs[0][1]);
+      for(let i=1;i<segs.length;i++) ctx.lineTo(segs[i][0],segs[i][1]);
+      ctx.strokeStyle='#ffffff'; ctx.lineWidth=2; ctx.stroke();
+      ctx.strokeStyle='rgba(255,255,180,0.85)'; ctx.lineWidth=1; ctx.stroke();
+    }
+    // 全屏半透明白遮罩（≈60ms，随剩余时间淡出）
+    const rem=(finalLightning.boltUntil-now)/(finalLightning.boltDur||6);
+    ctx.fillStyle='rgba(255,255,255,'+(0.15*clamp(rem,0,1)).toFixed(3)+')'; ctx.fillRect(0,0,W,H);
+  }
+  ctx.restore();
+}
 function drawPoisonSpreadOverlay(){
   const ratio=clamp(poisonT/(60*45),0,1), danger=1-ratio;
   ctx.save();
@@ -4254,6 +4920,8 @@ window.addEventListener('keydown', e=>{ if((e.code==='Enter'||e.code==='Space') 
 // 首次任意键解锁音频
 window.addEventListener('keydown', ()=>Sound.unlock(), {once:true});
 window.addEventListener('pointerdown', ()=>Sound.unlock(), {once:true});
+// 持续保障：任何用户交互后确保 AudioContext 处于 running（应对切换标签页导致的再次挂起）
+['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev, ()=>{ if(Sound.ctx && Sound.ctx.state==='suspended') Sound.ctx.resume(); }));
 
 /* -------------------------------------------------------------------------
    30. 主循环
