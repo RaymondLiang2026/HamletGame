@@ -409,7 +409,7 @@ function waitForNickname(forceEdit=false){
       dom.nicknameCount.textContent='宽度 '+nicknameWidth(dom.nicknameInput.value)+'/20（ASCII≤15，中文≤10）';
       dom.nicknameError.textContent='';
     };
-    dom.nicknameInput.value=stored; update(); hideAllOverlays(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
+    dom.nicknameInput.value=stored; update(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
     dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent='请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname, true); };
     dom.nicknameSkipBtn.onclick=()=>finish(makeRandomNickname(), false);
     dom.nicknameInput.oninput=update;
@@ -3957,8 +3957,7 @@ async function startGame(){
 dom.startBtn.addEventListener('click', startGame);
 // 页面加载后立即检查昵称，未命名则弹出取名弹窗（不阻断标题页交互）
 (function initNicknameOnLoad(){
-  const stored = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
-  if(!isValidNickname(stored) || !isNicknameConfirmed()){
+  if(!isNicknameConfirmed()){
     waitForNickname();
   }
 })();
