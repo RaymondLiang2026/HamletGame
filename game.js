@@ -18,8 +18,8 @@ ctx.imageSmoothingEnabled = false;
 const GRAVITY = 0.62, MOVE_SPEED = 3.4, AIR_ACCEL = 0.5, FRICTION = 0.78;
 const JUMP_VEL = -12.6, MAX_FALL = 15;
 
-const STATE = { TITLE:'title', STORY:'story', PLAY:'play', CLEAR:'clear', WIN:'win', LOSE:'lose' };
-let state = STATE.TITLE;
+const STATE = { NICKNAME_SETUP:'nickname_setup', TITLE:'title', STORY:'story', PLAY:'play', CLEAR:'clear', WIN:'win', LOSE:'lose' };
+let state = STATE.NICKNAME_SETUP;
 // 六段结构：0城堡 1宫廷 2逃亡 3湖边彩蛋 4英格兰 5墓地/王座终章
 const ACT_CASTLE=0, ACT_COURT=1, ACT_ESCAPE=2, ACT_LAKE=3, ACT_ENGLAND=4, ACT_FINAL=5;
 let actIndex = 0;                    // 0..5 => 六段
@@ -398,7 +398,7 @@ function ensurePlayerProfile(){
   saveNickname(nickname);
   return syncPlayerProfile();
 }
-function waitForNickname(forceEdit=false){
+function waitForNickname(forceEdit=false, requireConfirmedName=false){
   const stored = normalizeNickname(safeStorageGet(PLAYER_NICKNAME_KEY));
   if(!forceEdit && isValidNickname(stored) && isNicknameConfirmed()) return ensurePlayerProfile();
   return new Promise(resolve=>{
@@ -410,8 +410,9 @@ function waitForNickname(forceEdit=false){
       dom.nicknameError.textContent='';
     };
     dom.nicknameInput.value=stored; update(); show(dom.nicknameScreen); setTimeout(()=>dom.nicknameInput.focus(), 0);
-    dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent='请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname, true); };
+    dom.nicknameConfirmBtn.onclick=()=>{ const nickname=normalizeNickname(dom.nicknameInput.value); if(!nickname){ dom.nicknameError.textContent=requireConfirmedName?'请输入昵称，尊贵的灵魂。':'请输入昵称，或点击跳过使用随机昵称。'; return; } finish(nickname, true); };
     dom.nicknameSkipBtn.onclick=()=>finish(makeRandomNickname(), false);
+    dom.nicknameSkipBtn.style.display=requireConfirmedName?'none':'';
     dom.nicknameInput.oninput=update;
     dom.nicknameInput.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); dom.nicknameConfirmBtn.click(); } };
   });
@@ -3579,7 +3580,7 @@ function updateBonusMonologue(){
 function render(){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.clearRect(0,0,W,H);
-  if(state===STATE.TITLE){ drawTitleScene(); }
+  if(state===STATE.TITLE || state===STATE.NICKNAME_SETUP){ drawTitleScene(); }
   else if(state==='ending'){ drawEndingScene(); return; }
   else {
     drawBackground();
@@ -3940,8 +3941,32 @@ function drawParticlesScreen(){
 function hideAllOverlays(){
   [dom.titleScreen,dom.storyScreen,dom.levelClearScreen,dom.winScreen,dom.loseScreen,dom.messageBoard,dom.nicknameScreen].forEach(hide);
 }
+function configureNicknameSetupCopy(){
+  const title = dom.nicknameScreen.querySelector('h2');
+  const hint = dom.nicknameScreen.querySelector('.nicknameHint');
+  if(title) title.textContent='想起你的名字，尊贵的灵魂';
+  if(hint) hint.textContent='把名字写进丹麦夜色。昵称会用于留言板与击杀排行。ASCII 最多 15 字符，中文/非 ASCII 最多 10 字符，混合宽度不超过 20。';
+  dom.nicknameConfirmBtn.textContent='确认，我记起来了';
+}
+function enterTitleScreen(){
+  hide(dom.nicknameScreen);
+  show(dom.titleScreen);
+  state=STATE.TITLE;
+}
+function enterNicknameSetup(forceEdit=false){
+  configureNicknameSetupCopy();
+  hideAllOverlays();
+  hide(dom.titleScreen);
+  state=STATE.NICKNAME_SETUP;
+  waitForNickname(forceEdit, true).then(enterTitleScreen);
+}
+function initializeTitleFlow(){
+  configureNicknameSetupCopy();
+  hideAllOverlays();
+  if(isNicknameConfirmed()) enterTitleScreen();
+  else enterNicknameSetup(false);
+}
 async function startGame(){
-  await waitForNickname();
   Sound.unlock();
   score=0; comboCount=0; comboTimer=0; stats={time:0,kills:0,boxes:0,secrets:0};
   opheliaSaved=true; hasBow=false; darkMode=false; opheliaWounded=false; ghostOpheliaFinale=false;
@@ -3955,12 +3980,6 @@ async function startGame(){
 
 // 按钮
 dom.startBtn.addEventListener('click', startGame);
-// 页面加载后立即检查昵称，未命名则弹出取名弹窗（不阻断标题页交互）
-(function initNicknameOnLoad(){
-  if(!isNicknameConfirmed()){
-    waitForNickname();
-  }
-})();
 dom.storyBtn.addEventListener('click', storyAdvance);
 dom.skipBtn.addEventListener('click', ()=>{ const cb=storyDoneCb; storyDoneCb=null; hide(dom.storyScreen); if(cb)cb(); });
 dom.nextBtn.addEventListener('click', proceedAfterClear);
@@ -3970,7 +3989,7 @@ dom.muteBtn.addEventListener('click', ()=>{ Sound.unlock(); const on=Sound.toggl
 dom.messageSubmitBtn.addEventListener('click', submitMessage);
 dom.messageCloseBtn.addEventListener('click', closeMessageBoard);
 dom.messageInput.addEventListener('input', updateMessageMeta);
-dom.nicknameEditBtn.addEventListener('click', ()=>waitForNickname(true));
+dom.nicknameEditBtn.addEventListener('click', ()=>enterNicknameSetup(true));
 updateNicknameHud();
 // 结局推进：点击画布 / 回车
 canvas.addEventListener('click', ()=>{ if(state==='ending') endingProceed(); });
@@ -3995,5 +4014,5 @@ function loop(t){
 }
 requestAnimationFrame(loop);
 
-// 首帧标题渲染
-state=STATE.TITLE;
+// 首帧按昵称确认状态进入两层菜单
+initializeTitleFlow();
