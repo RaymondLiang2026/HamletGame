@@ -1704,6 +1704,57 @@ function ensureTraversable(lv){
     }
   }
 }
+function safeGroundSpots(lv){
+  return (lv.platforms||[]).filter(p=>p.type==='ground'&&Math.abs(p.y-GROUND_TOP)<1&&p.w>=PLAYER_W+80)
+    .map(p=>({x1:p.x+30,x2:p.x+p.w-30,y:p.y,mid:p.x+p.w/2,w:p.w})).filter(s=>s.x2>s.x1)
+    .sort((a,b)=>a.x1-b.x1);
+}
+function pointOverlapsBonusEntrance(lv, x, y){
+  const body={x:x-PLAYER_W/2,y:y-PLAYER_H,w:PLAYER_W,h:PLAYER_H};
+  return (lv.triggers||[]).some(tr=>tr.type==='bonusEntrance' && rectsOverlap(body,{x:tr.x-18,y:tr.y-18,w:tr.w+36,h:tr.h+36}));
+}
+function checkpointHazardRisk(lv, x, y){
+  const foot={x:x-PLAYER_W/2-8,y:y-8,w:PLAYER_W+16,h:16};
+  return (lv.hazards||[]).some(h=>{
+    const nearX = h.x < x+48 && h.x+(h.w||0) > x-48;
+    const nearY = Math.abs((h.y||GROUND_TOP)-y) < 80;
+    return nearX && nearY || rectsOverlap(foot,{x:h.x,y:h.y,w:h.w||0,h:h.h||0});
+  });
+}
+function safeSpawnPoint(lv, x, preferY){
+  const spots=safeGroundSpots(lv);
+  let best=null, bestScore=Infinity;
+  for(const s of spots){
+    const sx=clamp(Number.isFinite(x)?x:s.mid, s.x1, s.x2);
+    if(checkpointHazardRisk(lv, sx, s.y)) continue;
+    if(pointOverlapsBonusEntrance(lv, sx, s.y)) continue;
+    const score=Math.abs(sx-(Number.isFinite(x)?x:s.mid)) + Math.abs((preferY||GROUND_TOP)-s.y)*2;
+    if(score<bestScore){ best={x:sx,y:s.y}; bestScore=score; }
+  }
+  if(best) return best;
+  const g=spots[0] || {x1:80,x2:180,y:GROUND_TOP,mid:80};
+  return {x:clamp(Number.isFinite(x)?x:g.mid, g.x1, g.x2), y:g.y};
+}
+function sanitizeLevelCheckpoints(lv){
+  lv.playerStart=safeSpawnPoint(lv, lv.playerStart&&lv.playerStart.x, lv.playerStart&&lv.playerStart.y);
+  for(const cp of lv.checkpoints||[]){
+    const safe=safeSpawnPoint(lv, cp.x, cp.y);
+    cp.x=safe.x; cp.y=safe.y;
+  }
+}
+function safeRespawnValue(raw){
+  if(!level) return {x:80,y:GROUND_TOP};
+  const x=Number.isFinite(raw&&raw.x)?raw.x:level.playerStart.x;
+  const y=Number.isFinite(raw&&raw.y)?raw.y:level.playerStart.y;
+  const safe=safeSpawnPoint(level,x,y);
+  if(raw&&raw._bossGate) safe._bossGate=true;
+  return safe;
+}
+function teleportPlayerToSafeRespawn(label){
+  respawn=safeRespawnValue(respawn);
+  player.x=respawn.x; player.y=respawn.y-PLAYER_H; player.vx=0; player.vy=0; player.invuln=Math.max(player.invuln||0,60);
+  if(label) addFloater(player.x+player.w/2, player.y-16, label, '#e8c25a', 12);
+}
 
 let level = null;               // 当前关卡数据
 // 实时实体数组
@@ -1900,6 +1951,7 @@ function buildAct(idx){
   }
   ensureTraversable(lv);          // 通行性保障：确保任何地刺/坑洞段都有可跳过的落脚点
   if(idx!==ACT_LAKE) createBonusEntrance(lv, idx);
+  sanitizeLevelCheckpoints(lv);    // 统一校正出生点/检查点，避免坑内、空中、边缘或入口触发区复活
   lv.secretTotal = lv.chests.length;
   return lv;
 }
@@ -2684,12 +2736,14 @@ function exitBonus(success){
   jumpEdge=atkEdge=rangedEdge=false;
   loadLevel(saved.actIndex, true);
   score=saved.score; stats=saved.stats; dom.scoreVal.textContent=score;
-  respawn={x:saved.respawn.x,y:saved.respawn.y};
-  let safeX = saved.respawn.x;
+  respawn=safeRespawnValue({x:saved.respawn.x,y:saved.respawn.y});
+  let safeX = respawn.x;
+  let safeY = respawn.y;
   if(saved.entrance){
-    safeX = Math.max(40, saved.entrance.x - PLAYER_W - 36);
+    const safe=safeSpawnPoint(level, saved.entrance.x - PLAYER_W - 36, saved.respawn.y);
+    safeX=safe.x; safeY=safe.y; respawn=safe;
   }
-  player=makePlayer(safeX, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.vx=0; player.vy=0; player.invuln=90;
+  player=makePlayer(safeX, safeY); player.hp=saved.hp; player.ammo=saved.ammo; player.vx=0; player.vy=0; player.invuln=90;
   camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
   state=STATE.PLAY; goalReached=false; restoreMainMusic(); updateHUD();
   if(success && done) addFloater(player.x+player.w/2, player.y-35, '支线完成：'+done.kind, '#e8c25a', 14);
@@ -2937,7 +2991,7 @@ function updatePlayer(){
   const solids=solidsList();
   stepPhysics(p, solids);
   // 掉出世界底部
-  if(p.y>level.height+40){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=60; return; } if(actIndex===3) drownPlayer(); else damagePlayer(30, p.x); if(!p.dead){ p.y=respawn.y-PLAYER_H; p.x=respawn.x; p.vy=0; } }
+  if(p.y>level.height+40){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=60; return; } if(actIndex===3) drownPlayer(); else damagePlayer(30, p.x); if(!p.dead){ teleportPlayerToSafeRespawn('已传送回安全检查点'); } }
   // 危险区
   checkHazards();
   // 姿态
@@ -2957,7 +3011,7 @@ function checkHazards(){
   const body={x:p.x+3,y:p.y+4,w:p.w-6,h:p.h-8};
   for(const hz of level.hazards){
     if(hz.type==='water'){
-      if(rectsOverlap(feet,hz)){ if(actIndex===3){ drownPlayer(); } else { damagePlayer(20,hz.x+hz.w/2); if(!p.dead){ p.vy=-6; p.x=respawn.x; p.y=respawn.y-PLAYER_H; } } return; }
+      if(rectsOverlap(feet,hz)){ if(actIndex===3){ drownPlayer(); } else { damagePlayer(20,hz.x+hz.w/2); if(!p.dead){ p.vy=-6; teleportPlayerToSafeRespawn('已传送回安全检查点'); } } return; }
     } else if(hz.type==='spike'){
       if(rectsOverlap(feet,hz)){ if(bonusLevel){ if(level.deaths!==undefined) level.deaths++; p.x=respawn.x; p.y=respawn.y-PLAYER_H; p.vy=0; p.hp=p.maxHp; p.invuln=50; addFloater(p.x+p.w/2,p.y-16,'死亡次数 '+level.deaths,'#ff8a8a',13); return; } damagePlayer(14, p.x+ (p.x<hz.x+hz.w/2? -20:20)); if(!p.dead){ p.vy=-7; } return; }
     } else if(hz.type==='poison'){
@@ -3104,8 +3158,8 @@ function updateTriggersAndCheckpoints(){
   // 检查点
   for(const cp of level.checkpoints){
     if(!cp.active && Math.abs((player.x+player.w/2)-cp.x)<26 && player.y+player.h>cp.y-60){
-      cp.active=true; checkpointActive=cp; respawn={x:cp.x, y:cp.y};
-      addFloater(cp.x, cp.y-52, '检查点', ACTS[actIndex].accent, 14); Sound.checkpoint();
+      cp.active=true; checkpointActive=cp; respawn=safeRespawnValue(cp);
+      addFloater(respawn.x, respawn.y-52, '检查点', ACTS[actIndex].accent, 14); Sound.checkpoint();
       if(cp.bossGate) respawn._bossGate=true;
     }
   }
@@ -3440,8 +3494,8 @@ function respawnAtCheckpoint(){
   projectiles=[]; rocks=[];
   const spawnX = Number.isFinite(respawn&&respawn.x) ? respawn.x : level.playerStart.x;
   const spawnY = Number.isFinite(respawn&&respawn.y) ? respawn.y : level.playerStart.y;
-  respawn={x:spawnX, y:spawnY};
-  player=makePlayer(spawnX, spawnY);
+  respawn=safeRespawnValue({x:spawnX,y:spawnY,_bossGate:respawn&&respawn._bossGate});
+  player=makePlayer(respawn.x, respawn.y);
   if(!hasBow) player.ammo=0;
   player.invuln=90;
   camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
