@@ -2385,6 +2385,7 @@ let activeBossEntry=null;            // 当前激活的 Boss 计划条目
 let bonusLevel=null;                 // 趣味支线状态：与 actIndex/currentAct 隔离
 let bonusReturn=null;                // 进入趣味关前的回档点
 let bonusBoardAct=0;
+let bonusExitCooldownUntil=0;         // 退出趣味关后短暂冷却，避免回到主线入口后立刻重进
 
 const BONUS_TITLES = ['登高挑战','宫廷回廊',"Monica's Test",'英格兰迷宫','决战前的独白'];
 function messageWidth(text){
@@ -2582,7 +2583,23 @@ function buildBonusLevel(bonusAct){
     [[RX,66],[LX,132],[RX,198],[LX,264],[RX,330],[LX,396],[RX,462]].forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:PW,h:14,type:'plat'}));
     lv.platforms.push({x:700,y:GROUND_TOP-528,w:400,h:16,type:'plat',board:true}); // 顶点特效区
   }
+  placeBonusExitPortal(lv, bonusAct);
   return lv;
+}
+function placeBonusExitPortal(lv, bonusAct){
+  const portal = { w:56, h:104 };
+  if(bonusAct===1 || bonusAct===5){
+    const top=lv.platforms.find(p=>p.board);
+    if(top){
+      portal.x=top.x+top.w-portal.w-28;
+      portal.y=top.y-portal.h;
+    }
+  }
+  if(portal.x===undefined){
+    portal.x=Math.max(80, Math.min(lv.goalX || lv.width-120, lv.width-portal.w-60));
+    portal.y=GROUND_TOP-portal.h;
+  }
+  lv.exitPortal=portal;
 }
 function createBonusEntrance(lv, mainAct){
   const bonusAct = mainAct===ACT_ENGLAND ? 4 : (mainAct===ACT_FINAL ? 5 : mainAct+1);
@@ -2607,7 +2624,7 @@ function restoreMainMusic(){
   Sound.setMusic(mus, 1);
 }
 function enterBonus(actNumber, entranceTrigger){
-  if(bonusLevel) return;
+  if(bonusLevel || frame<bonusExitCooldownUntil) return;
   bonusReturn=saveBonusReturn(entranceTrigger); bonusLevel={act:actNumber, kind:BONUS_TITLES[actNumber-1]};
   level=buildBonusLevel(actNumber); player=makePlayer(level.playerStart.x, level.playerStart.y); player.hp=bonusReturn.hp; player.ammo=bonusReturn.ammo;
   enemies=[]; projectiles=[]; rocks=[]; particles=[]; floaters=[]; petals=[]; texts=[]; boss=null; bossStarted=false; companion=null;
@@ -2619,7 +2636,7 @@ function enterBonus(actNumber, entranceTrigger){
 function exitBonus(success){
   const saved=bonusReturn; const done=bonusLevel;
   if(!saved) return;
-  bonusLevel=null; bonusReturn=null; hide(dom.messageBoard);
+  bonusLevel=null; bonusReturn=null; bonusExitCooldownUntil=frame+18; hide(dom.messageBoard);
   keys.left=keys.right=keys.jump=keys.attack=keys.ranged=false;
   jumpEdge=atkEdge=rangedEdge=false;
   loadLevel(saved.actIndex, true);
@@ -3648,6 +3665,11 @@ function updateBonusPlay(){
   if(player.dead) return;
   if(bonusLevel.act!==5){ updateEnemies(); updateProjectiles(); updatePickups(); }
   if(bonusLevel.act===5) updateBonusMonologue();
+  if(level.exitPortal && rectsOverlap(player, level.exitPortal)){
+    flash('#e8c25a',14);
+    exitBonus(true);
+    return;
+  }
   if(bonusLevel.act===1 || bonusLevel.act===5){
     // 登高关：踩上顶点平台（脚部落在平台面 ±16px 且横向处于平台范围内）才算通关
     const top=level.platforms.find(p=>p.board);
@@ -3721,6 +3743,7 @@ function drawWorld(){
   for(const tr of level.triggers){ if(tr.x+tr.w<vx0||tr.x>vx1)continue; if(tr.type==='bonusEntrance')continue; drawTrigger(tr); }
   for(const cp of level.checkpoints){ if(cp.x<vx0||cp.x>vx1)continue; drawCheckpoint(cp); }
   for(const it of level.pickups){ if(it.taken||it.x>vx1||it.x+it.w<vx0)continue; drawPickupItem(it); }
+  if(level.exitPortal) drawBonusExitPortal(level.exitPortal);
   // 目标门
   if(!goalReached && (actIndex<3 || bonusLevel)) drawGoal(level.goalX, GROUND_TOP);
   // 落石
@@ -3741,6 +3764,22 @@ function drawWorld(){
   if(player && !player.dead){ drawPlayerWorld(); }
   // 粒子/花瓣
   drawParticlesWorld();
+}
+function drawBonusExitPortal(portal){
+  const cx=portal.x+portal.w/2, base=portal.y+portal.h;
+  const pulse=0.55+0.25*Math.sin(frame*0.12);
+  ctx.save();
+  const g=ctx.createLinearGradient(cx, portal.y, cx, base);
+  g.addColorStop(0,'rgba(255,238,150,0.08)');
+  g.addColorStop(0.45,'rgba(232,194,90,'+(0.36+pulse*0.18)+')');
+  g.addColorStop(1,'rgba(255,176,42,0.18)');
+  ctx.fillStyle=g; ctx.fillRect(portal.x, portal.y, portal.w, portal.h);
+  ctx.strokeStyle='rgba(255,235,160,0.9)'; ctx.lineWidth=2; ctx.strokeRect(portal.x+4, portal.y+4, portal.w-8, portal.h-8);
+  ctx.globalAlpha=0.55; ctx.fillStyle='#e8c25a'; ctx.beginPath(); ctx.ellipse(cx, base-6, portal.w*0.52, 8, 0, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+  for(let i=0;i<3;i++){ const x=portal.x+10+i*18; ctx.fillStyle='rgba(255,230,120,'+(0.28+0.18*Math.sin(frame*0.1+i))+')'; ctx.fillRect(x, portal.y+8, 5, portal.h-18); }
+  ctx.font='bold 13px "Courier New","Songti SC",monospace'; ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#fff0a8';
+  ctx.fillText('[ 出口 → 主线 ]', cx, portal.y-8);
+  ctx.restore();
 }
 function drawWorldTextLayer(){
   if(!level) return;
@@ -3851,6 +3890,7 @@ function drawPlayerWorld(){
   }
 }
 function drawPlayerNickname(p){
+  return; // 已禁用头顶昵称牌
   const nickname=getPlayerNickname();
   const dlgLeft = document.getElementById('dlgLeft');
   const dlgRight = document.getElementById('dlgRight');
