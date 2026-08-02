@@ -442,6 +442,29 @@ const dom = {
 };
 function show(el){ el.classList.remove('hidden'); }
 function hide(el){ el.classList.add('hidden'); }
+function applyRuntimeUiFixes(){
+  const storyWrap = dom.storyBody && dom.storyBody.closest ? dom.storyBody.closest('.storyWrap') : null;
+  if(storyWrap){
+    storyWrap.style.width = '62%';
+    storyWrap.style.maxWidth = '620px';
+    storyWrap.style.marginRight = '34%';
+  }
+  updateDialogueBarOffset();
+}
+function updateDialogueBarOffset(){
+  if(!dom.dlgBar) return;
+  let top = 90;
+  if(dom.hud && dom.hud.getBoundingClientRect){
+    const stage = canvas.parentElement;
+    const hudRect = dom.hud.getBoundingClientRect();
+    const stageRect = stage && stage.getBoundingClientRect ? stage.getBoundingClientRect() : { top:0 };
+    const hudBottom = Math.ceil(hudRect.bottom - stageRect.top);
+    if(hudBottom > 0) top = hudBottom + 10;
+  }
+  dom.dlgBar.style.top = top + 'px';
+}
+applyRuntimeUiFixes();
+window.addEventListener('resize', updateDialogueBarOffset);
 let bossGuideTimer=null;
 function showBossGuide(){
   if(actIndex!==ACT_CASTLE || !dom.bossGuide) return;
@@ -2030,8 +2053,7 @@ function updateStoryFx(){
   bg.addColorStop(0, act===ACT_ENGLAND?'#07111a':(act===ACT_COURT?'#120b16':(act===ACT_FINAL && !opheliaSaved?'#08050d':'#070610')));
   bg.addColorStop(1, '#020106'); c.fillStyle=bg; c.fillRect(0,0,W,H);
   drawStoryParticles(c, act);
-  drawStorySilhouette(c, 126, H-48, 4.0, act, 'left', activeStorySide()==='left');
-  drawStorySilhouette(c, W-126, H-48, 3.7, act, 'right', activeStorySide()==='right');
+  drawStorySilhouette(c, W-148, H-36, 4.15, act, 'rightHamlet', true);
 }
 function clearStoryFx(){ if(storyFxCtx) storyFxCtx.clearRect(0,0,W,H); storyParticles=[]; }
 function activeStorySide(){ const pc=storyPieces[Math.max(0, Math.min(storyLineIdx-1, storyPieces.length-1))]; return pc && pc.speak ? 'right' : 'left'; }
@@ -2056,7 +2078,7 @@ function drawStorySilhouette(c, x, y, s, act, side, active){
   aura.addColorStop(0, finalGold?'rgba(232,194,90,.28)':(finalDoom?'rgba(96,45,135,.32)':'rgba(120,130,170,.22)'));
   aura.addColorStop(1,'rgba(0,0,0,0)'); c.fillStyle=aura; c.fillRect(-70,-116,140,128);
   if(side==='right') drawVectorOpheliaPortrait(c, opheliaPortraitMode(act), active);
-  else drawVectorHamletPortrait(c, act, finalGold, finalDoom);
+  else drawHamletOn(c, 0, 0, 1, act);
   c.restore();
 }
 function opheliaPortraitMode(act){
@@ -2434,6 +2456,7 @@ function closeMessageBoard(){
    ------------------------------------------------------------------------- */
 const Dialog = {
   queue:[], src:[], cur:null, hold:0, gap:0, loop:true,
+  isActive(){ return !!(this.cur && this.hold>0); },
   push(lines){ (lines||[]).forEach(l=>{ this.queue.push(l); this.src.push(l); }); },
   clear(){ this.queue=[]; this.src=[]; this.cur=null; this.hold=0; this.gap=0; this._hideBoth(); },
   _hideBoth(){ if(dom.dlgLeft){ dom.dlgLeft.classList.remove('show'); dom.dlgRight.classList.remove('show'); } },
@@ -3775,7 +3798,7 @@ function drawPlayerWorld(){
 }
 function drawPlayerNickname(p){
   const nickname=getPlayerNickname();
-  if(!nickname) return;
+  if(!nickname || (typeof Dialog!=='undefined' && Dialog.isActive())) return;
   ctx.save();
   ctx.font='bold 12px "Courier New","Songti SC",monospace';
   ctx.textAlign='center';
@@ -3997,6 +4020,7 @@ async function startGame(){
   opheliaSaved=true; hasBow=false; darkMode=false; opheliaWounded=false; ghostOpheliaFinale=false;
   dom.scoreVal.textContent='0';
   show(dom.hud); show(dom.scorePanel); show(dom.muteBtn); show(dom.ctrlHint); show(dom.dlgBar);
+  updateDialogueBarOffset();
   hideAllOverlays();
   actIndex=0;
   camX=0; camY=0;
