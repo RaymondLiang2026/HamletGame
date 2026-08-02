@@ -68,6 +68,15 @@ const KEYMAP = {
 };
 let jumpEdge=false, atkEdge=false, rangedEdge=false; // 上升沿检测
 
+// 趣味关卡 Esc 退出需要最高优先级捕获，避免 story/pause/messageBoard 等状态先吃掉按键。
+window.addEventListener('keydown', e=>{
+  if(e.code==='Escape' && bonusLevel){
+    e.preventDefault(); e.stopImmediatePropagation();
+    exitBonus(state==='messageBoard');
+    return;
+  }
+}, true);
+
 window.addEventListener('keydown', e=>{
   const k = KEYMAP[e.code];
   if(k){
@@ -2450,28 +2459,40 @@ function buildBonusLevel(bonusAct){
     platforms:[], hazards:[], movers:[], breakables:[], chests:[], enemySpawns:[], checkpoints:[], triggers:[], pickups:[], rockEmitters:[],
     segments:[{x:0,name:'隐藏挑战（可选）'}], goalX:1640, playerStart:{x:70,y:GROUND_TOP}, completeMode:'bonus', bonusAct:n, bonusFinished:false };
   if(bonusAct===1){
-    lv.width=940; lv.height=980; lv.goalX=492; lv.playerStart={x:80,y:GROUND_TOP};
+    lv.width=980; lv.height=900; lv.goalX=492; lv.playerStart={x:80,y:GROUND_TOP};
     lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'});
     const steps=[
-      [126,68,96],[260,136,98],[142,204,104],[274,272,108],[154,340,108],
-      [286,408,112],[176,476,112],[308,544,116],[218,612,118],[344,680,122]
+      [60,60,130],[220,120,130],[80,180,130],[240,240,130],[60,300,130],
+      [230,360,130],[70,420,140],[240,480,140],[80,540,140],[250,600,140],[90,660,150]
     ];
     steps.forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:s[2],h:14,type:'plat'}));
     lv.platforms.push({x:448,y:GROUND_TOP-748,w:190,h:16,type:'plat',board:true});
   } else if(bonusAct===2){
     lv.width=2100; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
     ['patrol','patrol','shield','patrol','shield'].forEach((type,i)=>lv.enemySpawns.push({type,x:420+i*260,y:GROUND_TOP}));
+    lv.platforms.push({x:300,y:GROUND_TOP-80,w:100,h:14,type:'plat'});
+    lv.platforms.push({x:560,y:GROUND_TOP-60,w:100,h:14,type:'plat'});
+    lv.platforms.push({x:880,y:GROUND_TOP-100,w:110,h:14,type:'plat'});
+    lv.platforms.push({x:1150,y:GROUND_TOP-70,w:100,h:14,type:'plat'});
+    lv.platforms.push({x:1450,y:GROUND_TOP-90,w:110,h:14,type:'plat'});
+    lv.platforms.push({x:1750,y:GROUND_TOP-60,w:100,h:14,type:'plat'});
+    lv.enemySpawns.push({type:'archer',x:560,y:GROUND_TOP-60});
+    lv.enemySpawns.push({type:'archer',x:1150,y:GROUND_TOP-70});
     lv.pickups.push({x:760,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
     lv.pickups.push({x:1320,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
     lv.pickups.push({x:lv.width-180,y:GROUND_TOP-18,w:12,h:12,kind:'bonusCoin',taken:false});
   } else if(bonusAct===3){
     lv.width=2520; lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.platforms.push({x:lv.width-300,y:GROUND_TOP,w:300,h:LEVEL_H-GROUND_TOP,type:'ground'});
     lv.hazards.push({x:230,y:GROUND_TOP+10,w:lv.width-530,h:LEVEL_H-GROUND_TOP,type:'spike'});
-    for(let i=0;i<13;i++){ lv.movers.push({x:330+i*150,y:GROUND_TOP-42-(i%3)*26,w:76,h:12,type:'plat',axis:'y',range:24,speed:0.82,phase:i*.55,baseX:330+i*150,baseY:GROUND_TOP-42-(i%3)*26}); }
+    for(let i=0;i<13;i++){ lv.movers.push({x:330+i*150,y:GROUND_TOP-42-(i%3)*26,w:96,h:12,type:'plat',axis:'y',range:24,speed:0.65,phase:i*.7,baseX:330+i*150,baseY:GROUND_TOP-42-(i%3)*26}); }
     lv.deaths=0;
   } else if(bonusAct===4){
-    lv.width=1900; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.width=2100; lv.goalX=1960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
     [[250,70,116],[420,130,120],[600,190,126],[790,130,120],[970,70,116],[1135,128,124],[1325,186,130],[1515,124,126]].forEach(w=>lv.platforms.push({x:w[0],y:GROUND_TOP-w[1],w:w[2],h:14,type:'plat'}));
+    lv.platforms.push({x:800,y:GROUND_TOP-180,w:110,h:14,type:'plat'});
+    lv.platforms.push({x:940,y:GROUND_TOP-210,w:90,h:14,type:'plat'});
+    lv.platforms.push({x:1080,y:GROUND_TOP-180,w:90,h:14,type:'plat'});
+    lv.triggers.push({x:1080,y:GROUND_TOP-200,w:90,h:40,type:'hint',fired:false,key:'maze_dead',msg:'此路不通，换条路试试！'});
   } else {
     lv.width=960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.goalX=760; lv.monologue={t:0,typed:0,done:false,fade:0};
   }
@@ -2973,6 +2994,8 @@ function fireTrigger(tr){
       { zh:'哈姆雷特：“那歌声……她独自在湖边，太危险了。”', speak:true },
       { zh:'（抵达本幕终点，将进入隐藏彩蛋关 · 柳树湖畔）' }
     ]}], ()=>{ state=STATE.PLAY; });
+  } else if(tr.type==='hint'){
+    addFloater(player.x+player.w/2, player.y-44, tr.msg || '换条路试试！', '#e8c25a', 15);
   } else if(tr.type==='yorick'){ // 终章墓地
     showStory(STORY.a5_yorick, ()=>{ state=STATE.PLAY; });
   } else if(tr.type==='rescue'){ // 湖畔救援成功
@@ -3522,7 +3545,10 @@ function updateBonusPlay(){
   if(player.dead) return;
   if(bonusLevel.act!==5){ updateEnemies(); updateProjectiles(); updatePickups(); }
   if(bonusLevel.act===5) updateBonusMonologue();
-  if(player.x+player.w>level.goalX && (!level.monologue || level.monologue.done)) finishBonus();
+  if(bonusLevel.act===1){
+    const goalPlatY = level.platforms.find(p=>p.board)?.y ?? (GROUND_TOP - 720);
+    if(player.x+player.w>level.goalX && player.y<goalPlatY+60) finishBonus();
+  } else if(player.x+player.w>level.goalX && (!level.monologue || level.monologue.done)) finishBonus();
   updateCamera();
   if(++hudTick%4===0) updateHUD();
 }
@@ -3530,7 +3556,7 @@ function updateBonusMonologue(){
   const m=level.monologue; if(!m) return;
   const text='To be, or not to be, that is the question...\n生存还是毁灭，这是个问题……';
   m.t++;
-  if(m.t>50 && m.typed<text.length && m.t%3===0) m.typed++;
+  if(m.t>50 && m.typed<text.length && m.t%4===0) m.typed++;
   if(m.typed>=text.length){ m.fade=Math.min(120,m.fade+1); if(m.fade>=120) m.done=true; }
 }
 
@@ -3862,13 +3888,6 @@ dom.messageCloseBtn.addEventListener('click', closeMessageBoard);
 dom.messageInput.addEventListener('input', updateMessageMeta);
 dom.nicknameEditBtn.addEventListener('click', ()=>waitForNickname(true));
 updateNicknameHud();
-window.addEventListener('keydown', e=>{
-  if(e.code==='Escape' && bonusLevel){
-    e.preventDefault(); e.stopPropagation();
-    if(state==='messageBoard') exitBonus(true);
-    else exitBonus(false);
-  }
-}, true);
 // 结局推进：点击画布 / 回车
 canvas.addEventListener('click', ()=>{ if(state==='ending') endingProceed(); });
 window.addEventListener('keydown', e=>{ if((e.code==='Enter'||e.code==='Space') && state==='ending'){ endingProceed(); } });
