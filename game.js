@@ -154,6 +154,8 @@ const Sound = {
   water:false, bell:false, organ:false, choir:false, brass:false, intensity:1,
   step:0, nextT:0, timer:null, cur:null,
   custom:false, custMusic:null, custSecIdx:0, custNextT:0,
+  // ---- 层一：真实管弦乐素材（CC0 OGG，base64 内嵌于 bgm-assets.js）运行时解码为 AudioBuffer 循环铺底 ----
+  orchBuf:{}, orchLoading:{}, orchSrc:null, orchBedGain:null, orchName:null,
   init(){
     if(this.ctx) return;
     const AC = window.AudioContext||window.webkitAudioContext;
@@ -509,8 +511,76 @@ const Sound = {
     });
   },
   // ---- 循环 BGM ----
+  // ===== 层一：真实管弦乐铺底（CC0 素材）解码与循环播放 =====
+  _b64ToBuf(dataUri){
+    const b64 = dataUri.indexOf(',')>=0 ? dataUri.slice(dataUri.indexOf(',')+1) : dataUri;
+    const bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+    for(let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  },
+  // 解码指定素材为 AudioBuffer（带缓存/去重），返回 Promise（失败 resolve(null) → 退化为纯合成兜底）
+  loadOrch(name){
+    if(this.orchBuf[name]) return Promise.resolve(this.orchBuf[name]);
+    const store = (typeof window!=='undefined' && window.__ORCH_BGM__) || null;
+    const src = store && store[name];
+    if(!src || !this.ctx) return Promise.resolve(null);
+    if(this.orchLoading[name]) return this.orchLoading[name];
+    const p = new Promise(res=>{
+      try {
+        const buf = this._b64ToBuf(src);
+        const ret = this.ctx.decodeAudioData(buf, ab=>{ this.orchBuf[name]=ab; res(ab); }, ()=>res(null));
+        if(ret && typeof ret.then==='function') ret.then(ab=>{ this.orchBuf[name]=ab; res(ab); }).catch(()=>res(null));
+      } catch { res(null); }
+    });
+    this.orchLoading[name] = p;
+    return p;
+  },
+  startOrchBed(name,vol){
+    if(!this.ctx || !this.enabled) return;
+    this.loadOrch(name).then(ab=>{
+      if(!ab || this.orchName!==name || !this.enabled) return;   // 素材缺失或已切走则放弃（纯合成层继续运行）
+      this.stopOrchBed();
+      const s = this.ctx.createBufferSource(); s.buffer = ab; s.loop = true;
+      const g = this.ctx.createGain();
+      const t = this.ctx.currentTime;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol||0.5), t+1.4);   // 平滑淡入，禁止硬切
+      s.connect(g); g.connect(this.master);
+      s.start(); this.orchSrc = s; this.orchBedGain = g;
+    });
+  },
+  setOrchVol(v){
+    if(!this.orchBedGain || !this.ctx) return;
+    const t = this.ctx.currentTime, g = this.orchBedGain.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(Math.max(0.0001, g.value), t);
+    g.exponentialRampToValueAtTime(Math.max(0.0002, v), t+0.6);                 // Boss 阶段音量平滑递增
+  },
+  stopOrchBed(){
+    if(!this.orchSrc) return;
+    try {
+      const s = this.orchSrc, g = this.orchBedGain, t = this.ctx.currentTime;
+      if(g){ g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(Math.max(0.0001,g.gain.value),t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.4); }
+      setTimeout(()=>{ try{ s.stop(); }catch{} }, 460);
+    } catch {}
+    this.orchSrc = null; this.orchBedGain = null;
+  },
+  // 根据当前曲目与强度，启动/切换/调音量/停止真实管弦乐铺底（hero/imperial 专用）
+  _updateOrchBed(name){
+    const orchName = (name==='hero'||name==='imperial') ? name : null;
+    if(!this.ctx || !this.enabled){ this.orchName = orchName; return; }
+    if(orchName){
+      const bedVol = Math.min(0.72, 0.30 + 0.24*Math.min(1.8, this.intensity));  // 随 intensity(Boss阶段) 0.30→~0.72
+      if(this.orchName!==orchName){ this.orchName = orchName; this.stopOrchBed(); this.startOrchBed(orchName, bedVol); }
+      else if(this.orchSrc){ this.setOrchVol(bedVol); }
+      else { this.startOrchBed(orchName, bedVol); }
+    } else if(this.orchName){
+      this.orchName = null; this.stopOrchBed();
+    }
+  },
   setMusic(name,intensity){
     this.intensity = intensity||1;
+    this._updateOrchBed(name);                                                  // 层一铺底与合成层并行叠加
     if(this.cur===name && this.timer){ return; }
     this.cur=name; this.step=0;
     const M=MUSIC[name]||MUSIC.castle;
@@ -533,7 +603,7 @@ const Sound = {
     if(this.timer) clearInterval(this.timer);
     this.timer=setInterval(()=>this.sched(),25);
   },
-  boostIntensity(v){ this.intensity=v; },
+  boostIntensity(v){ this.intensity=v; if(this.orchName) this._updateOrchBed(this.cur); },
   sched(){
     if(!this.ctx||!this.enabled) return;
     if(this.custom){ this._schedCustom(); return; }
@@ -637,7 +707,7 @@ const Sound = {
     o.connect(g); g.connect(this.mg); o.start(t); o.stop(t+0.36);
     this.musNoise(t,0.11,vol*0.4,'lowpass',200,1);
   },
-  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; this.custom=false; this.custMusic=null; },
+  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; this.custom=false; this.custMusic=null; this.stopOrchBed(); this.orchName=null; },
   toggle(){ this.enabled=!this.enabled; if(!this.enabled) this.stopMusic(); return this.enabled; }
 };
 (function hardenSoundAPI(){
@@ -704,19 +774,68 @@ function _buildHeroMusic(){
     for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:BASSLINE[b],dur:beat*0.98,type:'square',
       vol:0.18*inten*(volScale||1),atk:0.02,rel:beat*0.5});
   }
+  // ===== 层二：多声部合成（8-12 独立音轨叠加，不改现有节点）=====
+  // 弦乐铺底和弦（4 拍一和弦，每和弦音双振荡器微 detune 制造合唱式厚度）——弦乐铺底 + 和声填充
+  const STR=[ [N.A2,N.E3,N.A3], [N.F2,N.C3,N.F3], [N.G2,N.D3,N.G3], [N.E2,N.B2,N.E3] ];
+  function stringBed(S,t0,inten,vol){
+    for(let c=0;c<4;c++){ const t=t0+c*4*beat, chord=STR[c];
+      chord.forEach(f=>{
+        S.musNote({t,f,dur:4.4*beat,type:'sawtooth',vol:(vol||0.05)*inten,atk:0.7,rel:2.4*beat,filter:{type:'lowpass',freq:1200,q:0.6}});
+        S.musNote({t,f:f*1.003,dur:4.4*beat,type:'triangle',vol:(vol||0.05)*inten*0.7,atk:0.8,rel:2.4*beat}); // +0.3% detune 合唱厚度
+      });
+    }
+  }
+  // 低音线：根音低八度 sine，支撑重量感
+  function subBass(S,t0,inten,vol){
+    for(let b=0;b<16;b++){ const f=BASSLINE[b]*0.5; S.musNote({t:t0+b*beat,f,dur:beat*0.97,type:'sine',vol:(vol||0.16)*inten,atk:0.03,rel:beat*0.5}); }
+  }
+  // ===== 层三：和声高层 —— 主旋律上方大三度(*5/4)+纯五度(*3/2)，正弦+微 detune 增丰满 =====
+  function harmonyVoices(S,t0,inten,volScale){
+    for(let b=0;b<16;b++){ const f=MEL[b], t=t0+b*beat;
+      S.musNote({t,f:f*1.25,       dur:beat*0.95,type:'sine',vol:0.075*inten*(volScale||1),atk:0.02,rel:beat*0.5}); // 大三度
+      S.musNote({t,f:f*1.25*1.004, dur:beat*0.95,type:'sine',vol:0.045*inten*(volScale||1),atk:0.02,rel:beat*0.5}); // 大三度 detune
+      S.musNote({t,f:f*1.5,        dur:beat*0.95,type:'sine',vol:0.06*inten*(volScale||1), atk:0.02,rel:beat*0.5}); // 纯五度
+    }
+  }
+  // 副旋律：三角波对句（旋律的呼应声部）
+  const COUNTER=[N.E4,N.G4,N.A4,N.C5, N.B4,N.G4,N.E4,N.F4, N.A4,N.C5,N.E4,N.G4, N.F4,N.E4,N.D4,N.E4];
+  function counterMel(S,t0,inten,vol){
+    for(let b=0;b<16;b++) S.musNote({t:t0+(b+0.5)*beat,f:COUNTER[b],dur:beat*0.7,type:'triangle',vol:(vol||0.06)*inten,atk:0.02,rel:beat*0.4});
+  }
+  // 泛音层：主旋律高两个八度的稀疏 sine 闪光
+  function overtones(S,t0,inten){
+    for(let b=0;b<16;b+=2) S.musNote({t:t0+b*beat,f:MEL[b]*4,dur:beat*1.4,type:'sine',vol:0.03*inten,atk:0.05,rel:beat*0.9});
+  }
+  // 打击乐补充：军鼓反拍 + 镲片长吊音
+  function extraPerc(S,t0,inten){
+    for(let b=0;b<16;b++){ if(b%4===2) S.musNoise(t0+b*beat,0.16,0.09*inten,'highpass',2400,0.8); } // 军鼓反拍
+    S.musNoise(t0,1.2,0.05*inten,'highpass',6000,0.5);   // 镲片起段长吊音
+    S.musNoise(t0+8*beat,1.2,0.05*inten,'highpass',6000,0.5);
+  }
+  // 层三 合唱感：C 段结尾多正弦微 detune 叠加模拟人声"啊"合唱
+  function choirPad(S,t0,inten){
+    const chord=[N.A4,N.C5,N.E5,N.A5];
+    chord.forEach(f=>{ [1,1.004,0.996].forEach((d,i)=>
+      S.musNote({t:t0,f:f*d,dur:16*beat*0.98,type:'sine',vol:(i===0?0.06:0.035)*inten,atk:1.4,rel:4*beat,filter:{type:'lowpass',freq:2200,q:0.4}})); });
+  }
   return {
     custom:true, beat, arrangement, sectionBeats, loopDur,
     renderSection(S,name,t0,inten){
-      if(name==='A'){ pad(S,t0,inten,0.09); }
+      if(name==='A'){ pad(S,t0,inten,0.09); stringBed(S,t0,inten,0.05); subBass(S,t0,inten,0.14); overtones(S,t0,inten*0.6); }
       else if(name==='A2'){                                                            // A' 变奏：pad + 三角波琶音对句
-        pad(S,t0,inten,0.10);
+        pad(S,t0,inten,0.10); stringBed(S,t0,inten,0.055); subBass(S,t0,inten,0.15); counterMel(S,t0,inten,0.05);
         const arp=[N.A4,N.C5,N.E5,N.C5, N.G4,N.B4,N.D5,N.B4, N.F4,N.A4,N.C5,N.A4, N.E4,N.G4,N.B4,N.G4];
         for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:arp[b],dur:beat*0.9,type:'triangle',vol:0.075*inten,atk:0.02,rel:beat*0.5});
       }
-      else if(name==='B'){ brassTriplets(S,t0,inten,1,false); bassLine(S,t0,inten,1); pad(S,t0,inten,0.05); }
-      else if(name==='C'){                                                             // 全奏冲锋：铜管+方波小号+低音+定音鼓每拍强击
+      else if(name==='B'){                                                             // B：主题 + 层二铺底 + 层三和声
+        brassTriplets(S,t0,inten,1,false); bassLine(S,t0,inten,1); pad(S,t0,inten,0.05);
+        stringBed(S,t0,inten,0.06); subBass(S,t0,inten,0.16); harmonyVoices(S,t0,inten,1); counterMel(S,t0,inten,0.06); extraPerc(S,t0,inten*0.8);
+      }
+      else if(name==='C'){                                                             // 全奏冲锋：铜管+方波小号+低音+定音鼓每拍强击 + 全层叠加 + 合唱高层
         brassTriplets(S,t0,inten,1.15,true); bassLine(S,t0,inten,1.1); pad(S,t0,inten,0.06);
         for(let b=0;b<16;b++) S.musTimpani(t0+b*beat, b%4===0?98:110, (b%4===0?0.5:0.32)*inten);
+        stringBed(S,t0,inten,0.07); subBass(S,t0,inten,0.18); harmonyVoices(S,t0,inten,1.2); counterMel(S,t0,inten,0.07);
+        overtones(S,t0,inten); extraPerc(S,t0,inten); choirPad(S,t0,inten);           // 生还线结尾合唱感
       }
     }
   };
@@ -752,6 +871,52 @@ function _buildImperialMusic(){
     for(let k=0;k<4;k++) S.musNote({t:t0+k*2*beat,f:bassNotes[k],dur:2*beat*0.96,type:'sawtooth',vol:0.2*inten*(volScale||1),atk:0.03,rel:beat*0.6,filter:{type:'lowpass',freq:400}});
     if(strong) for(let b=0;b<8;b++){ S.musTimpani(t0+b*beat,b%2===0?73:98,(b%2===0?0.45:0.3)*inten); S.musNoise(t0+b*beat,0.1,0.12*inten,'lowpass',2000,1); }
   }
+  // ===== 层二：多声部合成（低沉小调铺底，8-12 轨叠加，不改现有节点）=====
+  const IMPSTR=[ [N.A2,N.C3,N.E3], [N.A2,N.C3,N.E3], [N.F2,N.A2,N.C3], [N.C3,N.E3,N.G3] ]; // 小调和弦：Am Am F C
+  // 弦乐铺底：低通锯齿+三角微 detune 长音，阴森厚重（弦乐铺底 + 和声填充）
+  function darkStringBed(S,t0,inten,vol){
+    for(let c=0;c<4;c++){ const t=t0+c*4*beat, chord=IMPSTR[c];
+      chord.forEach(f=>{
+        S.musNote({t,f,dur:4.4*beat,type:'sawtooth',vol:(vol||0.05)*inten,atk:0.9,rel:2.4*beat,filter:{type:'lowpass',freq:600,q:0.7}});
+        S.musNote({t,f:f*0.997,dur:4.4*beat,type:'triangle',vol:(vol||0.05)*inten*0.6,atk:1.0,rel:2.4*beat,filter:{type:'lowpass',freq:500,q:0.6}}); // -0.3% detune
+      });
+    }
+  }
+  // 低音线：动机根音再低八度 sine 撑底
+  function subBassImp(S,t0,inten,vol){
+    const roots=[N.A2,N.A2,N.F2,N.C3];
+    for(let k=0;k<4;k++) S.musNote({t:t0+k*4*beat,f:roots[k]*0.5,dur:4*beat*0.96,type:'sine',vol:(vol||0.18)*inten,atk:0.2,rel:beat*0.8});
+  }
+  // 低沉铜管长音铺垫（低通厚重 drone）
+  function lowBrassPad(S,t0,inten,vol){
+    const roots=[N.A2,N.A2,N.F2,N.C3];
+    for(let k=0;k<4;k++) S.musNote({t:t0+k*4*beat,f:roots[k],dur:4*beat*0.94,type:'sawtooth',vol:(vol||0.06)*inten,atk:0.5,rel:beat,filter:{type:'lowpass',freq:520,q:0.8}});
+  }
+  // ===== 层三：和声高层（小调）—— 动机上方小三度(*6/5)+纯五度(*3/2)，正弦+微 detune =====
+  function harmonyMinor(S,t0,inten,volScale){
+    let bt=0;
+    for(const [f,d] of MOTIF){ const t=t0+bt*beat, dur=d*beat;
+      S.musNote({t,f:f*1.2,       dur:dur*0.95,type:'sine',vol:0.055*inten*(volScale||1),atk:0.03,rel:dur*0.4,filter:{type:'lowpass',freq:1400}}); // 小三度
+      S.musNote({t,f:f*1.2*0.996, dur:dur*0.95,type:'sine',vol:0.03*inten*(volScale||1), atk:0.03,rel:dur*0.4});                                  // 小三度 detune
+      S.musNote({t,f:f*1.5,       dur:dur*0.95,type:'sine',vol:0.045*inten*(volScale||1),atk:0.03,rel:dur*0.4,filter:{type:'lowpass',freq:1600}}); // 纯五度
+      bt+=d;
+    }
+  }
+  // 军鼓进行曲节奏（每小节，非强奏段也铺底）+ 低沉大鼓
+  function militaryPerc(S,t0,inten){
+    for(let b=0;b<16;b++){
+      if(b%4===0) S.musNoise(t0+b*beat,0.09,0.10*inten,'highpass',2000,0.9);
+      if(b%2===1) S.musNoise(t0+b*beat,0.06,0.05*inten,'highpass',3000,0.8);   // 军鼓弱拍
+      if(b%4===0) S.musTimpani(t0+b*beat,55,0.22*inten);                        // 大鼓每小节
+    }
+  }
+  // 冷色泛音（高音区稀疏 sine，营造压抑空旷）
+  function coldShimmer(S,t0,inten){
+    const hi=[N.E5,N.C5,N.A4,N.E5];
+    for(let k=0;k<4;k++) S.musNote({t:t0+k*4*beat,f:hi[k],dur:3*beat,type:'sine',vol:0.028*inten,atk:0.6,rel:1.5*beat,filter:{type:'lowpass',freq:2600}});
+  }
+  // 低沉铜锣：段落起点的一击（低频簇 + 噪声）
+  function gong(S,t0,inten){ S.musTimpani(t0,44,0.34*inten); S.musNoise(t0,0.8,0.08*inten,'lowpass',900,0.6); }
   return {
     custom:true, beat, arrangement, sectionBeats, loopDur,
     renderSection(S,name,t0,inten){
@@ -760,20 +925,32 @@ function _buildImperialMusic(){
         S.musNote({t:t0,f:55,to:65,dur:4*beat,type:'sawtooth',vol:0.06*inten,atk:1.1,rel:1.5,filter:{type:'lowpass',freq:200}});
         S.musNote({t:t0+4*beat,f:73,to:82,dur:4*beat,type:'sine',vol:0.18*inten,atk:1.0,rel:1.5});
         S.musNote({t:t0+4*beat,f:73,to:82,dur:4*beat,type:'sawtooth',vol:0.06*inten,atk:1.1,rel:1.5,filter:{type:'lowpass',freq:200}});
+        gong(S,t0,inten); coldShimmer(S,t0,inten*0.7);
       }
-      else if(name==='A'){ motifOnce(S,t0,inten,1,false); motifOnce(S,t0+8*beat,inten,1,false); }
-      else if(name==='As'){ motifOnce(S,t0,inten,1.2,true); motifOnce(S,t0+8*beat,inten,1.2,true); } // A 强奏
+      else if(name==='A'){                                                             // A：动机 + 层二铺底 + 层三小调和声 + 进行曲军鼓
+        motifOnce(S,t0,inten,1,false); motifOnce(S,t0+8*beat,inten,1,false);
+        darkStringBed(S,t0,inten,0.055); subBassImp(S,t0,inten,0.17); lowBrassPad(S,t0,inten,0.055);
+        harmonyMinor(S,t0,inten,1); harmonyMinor(S,t0+8*beat,inten,1); militaryPerc(S,t0,inten);
+      }
+      else if(name==='As'){                                                            // A 强奏：全层压迫 + 冷色泛音 + 铜锣
+        motifOnce(S,t0,inten,1.2,true); motifOnce(S,t0+8*beat,inten,1.2,true);
+        darkStringBed(S,t0,inten,0.07); subBassImp(S,t0,inten,0.2); lowBrassPad(S,t0,inten,0.07);
+        harmonyMinor(S,t0,inten,1.2); harmonyMinor(S,t0+8*beat,inten,1.2);
+        militaryPerc(S,t0,inten); coldShimmer(S,t0,inten); gong(S,t0,inten);
+      }
       else if(name==='B'){                                                             // 弦乐反主题：正弦哀鸣 + 三角波竖琴点缀
         let bt=0;
         for(const [f,d] of LAMENT){
           const t=t0+bt*beat, dur=d*beat;
           S.musNote({t,f,dur:dur*0.96,type:'sine',vol:0.15*inten,atk:0.08,rel:dur*0.45});
           S.musNote({t,f:f*0.5,dur:dur*0.96,type:'sine',vol:0.06*inten,atk:0.1,rel:dur*0.45}); // 低八度铺底
+          S.musNote({t,f:f*1.5,dur:dur*0.96,type:'sine',vol:0.04*inten,atk:0.12,rel:dur*0.45}); // 层三 纯五度和声
           bt+=d;
         }
         for(let b=0;b<16;b++) S.musNote({t:t0+b*beat,f:HARP[b%4],dur:beat*0.5,type:'triangle',vol:0.06*inten,atk:0.01,rel:beat*0.3}); // 竖琴琶音
         const bn=[N.A2,N.F2,N.G2,N.E2];
         for(let k=0;k<4;k++) S.musNote({t:t0+k*4*beat,f:bn[k],dur:4*beat*0.92,type:'sine',vol:0.12*inten,atk:0.1,rel:beat});
+        darkStringBed(S,t0,inten,0.045); subBassImp(S,t0,inten,0.14);                  // 层二铺底（弱）
       }
     }
   };
