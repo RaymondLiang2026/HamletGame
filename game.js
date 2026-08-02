@@ -3992,7 +3992,7 @@ function hideAllOverlays(){
 function configureNicknameSetupCopy(){
   const title = dom.nicknameScreen.querySelector('h2');
   const hint = dom.nicknameScreen.querySelector('.nicknameHint');
-  if(title) title.textContent='想起你的名字，尊贵的灵魂';
+  if(title) title.textContent='想起你的灵魂';
   if(hint) hint.textContent='把名字写进丹麦夜色。昵称会用于留言板与击杀排行。ASCII 最多 15 字符，中文/非 ASCII 最多 10 字符，混合宽度不超过 20。';
   dom.nicknameConfirmBtn.textContent='确认，我记起来了';
 }
