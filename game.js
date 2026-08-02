@@ -100,17 +100,31 @@ window.addEventListener('keydown', e=>{
 });
 window.addEventListener('keyup', e=>{ const k=KEYMAP[e.code]; if(k) keys[k]=false; });
 
-function bindTouch(id,key){
+function bindVirtualButton(id,key){
   const el=document.getElementById(id); if(!el) return;
   const on=e=>{ e.preventDefault(); if(!keys[key]){ if(key==='jump')jumpEdge=true; if(key==='atk')atkEdge=true; if(key==='ranged')rangedEdge=true; } keys[key]=true; };
   const off=e=>{ e.preventDefault(); keys[key]=false; };
   el.addEventListener('touchstart',on,{passive:false});
   el.addEventListener('touchend',off,{passive:false});
   el.addEventListener('touchcancel',off,{passive:false});
-  el.addEventListener('mousedown',on); el.addEventListener('mouseup',off); el.addEventListener('mouseleave',off);
 }
-bindTouch('tLeft','left'); bindTouch('tRight','right'); bindTouch('tJump','jump'); bindTouch('tAtk','atk'); bindTouch('tRanged','ranged');
-if('ontouchstart' in window){ const t=document.getElementById('touch'); if(t) t.style.display='block'; }
+function initVirtualPad(){
+  bindVirtualButton('vLeft','left');
+  bindVirtualButton('vRight','right');
+  bindVirtualButton('vJump','jump');
+  bindVirtualButton('vAttack','atk');
+  bindVirtualButton('vRange','ranged');
+}
+function checkOrientation(){
+  const hint=document.getElementById('rotateHint');
+  if(!hint) return;
+  const isPortrait=window.innerHeight>window.innerWidth;
+  hint.style.display=isPortrait?'flex':'none';
+}
+initVirtualPad();
+window.addEventListener('resize',checkOrientation);
+window.addEventListener('orientationchange',checkOrientation);
+checkOrientation();
 
 /* -------------------------------------------------------------------------
    3. 音频引擎（Web Audio 合成）
