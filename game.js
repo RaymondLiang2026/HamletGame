@@ -1930,7 +1930,7 @@ const Dialog = {
 function makePlayer(x,y){
   return {
     x, y:y-PLAYER_H, w:PLAYER_W, h:PLAYER_H, vx:0, vy:0, facing:1,
-    onGround:false, hp:100, maxHp:100, invuln:0,
+    onGround:false, hp:150, maxHp:150, invuln:0,
     atkT:0, atkCd:0, rangedCd:0, ammo:8, maxAmmo:12,
     energy:0, maxEnergy:100, pose:{type:'idle',frame:0,t:0},
     coyote:0, jumpBuf:0, hurtT:0, ultActive:0, dead:false
@@ -2485,7 +2485,7 @@ function updateBoss(){
   const d=Math.abs(px-ex);
   const solids=solidsList();
   // 接触伤害
-  if(!player.dead && player.invuln<=0 && rectsOverlap(player,b)) damagePlayer(b.phase>=3?18:12, ex);
+  if(!player.dead && player.invuln<=0 && rectsOverlap(player,b)) damagePlayer(b.phase>=3?11:7, ex);
   // 计时
   if(b.atkCd>0)b.atkCd--; if(b.summonCd>0)b.summonCd--; if(b.dashCd>0)b.dashCd--;
   if(b.poisonCd>0)b.poisonCd--; if(b.ultCd>0)b.ultCd--; if(b.atkT>0)b.atkT--;
@@ -2493,7 +2493,7 @@ function updateBoss(){
   if(b.state!=='dash'){ b.vx += (px<ex?-1:1)* (b.phase>=2?0.14:0.1); b.vx=clamp(b.vx,-(1.3+b.phase*0.3),(1.3+b.phase*0.3)); }
   // 近战
   if(d<64 && b.atkCd<=0){ b.atkT=22; b.atkCd = b.phase>=2?54:70; }
-  if(b.atkT===10){ const hb=b.facing>0?{x:b.x+b.w,y:b.y,w:52,h:b.h}:{x:b.x-52,y:b.y,w:52,h:b.h}; if(!player.dead&&player.invuln<=0&&rectsOverlap(hb,player)) damagePlayer(b.phase>=3?20:14, ex); }
+  if(b.atkT===10){ const hb=b.facing>0?{x:b.x+b.w,y:b.y,w:52,h:b.h}:{x:b.x-52,y:b.y,w:52,h:b.h}; if(!player.dead&&player.invuln<=0&&rectsOverlap(hb,player)) damagePlayer(b.phase>=3?12:8, ex); }
   // 召唤喽啰（具 summon 能力者）
   if(D.summon && b.phase===1 && b.summonCd<=0 && enemies.length<4){ b.summonCd=260; summonMinions(); }
   if(D.summon && b.phase>=2 && b.summonCd<=0 && enemies.length<3){ b.summonCd=340; summonMinions(); }
@@ -2518,7 +2518,7 @@ function summonMinions(){
 function enemyShootFromBoss(kind){
   const sx=boss.x+boss.w/2, sy=boss.y+boss.h*0.3;
   const ang=Math.atan2((player.y+player.h/2)-sy,(player.x+player.w/2)-sx);
-  projectiles.push({owner:'enemy', x:sx,y:sy, vx:Math.cos(ang)*4.6, vy:Math.sin(ang)*4.6-1, w:12,h:4, dmg:boss.phase>=3?14:10, kind, life:170, ang});
+  projectiles.push({owner:'enemy', x:sx,y:sy, vx:Math.cos(ang)*4.6, vy:Math.sin(ang)*4.6-1, w:12,h:4, dmg:boss.phase>=3?8:6, kind, life:170, ang});
   Sound.rangedFire();
 }
 function bossUlt(){
@@ -2537,7 +2537,7 @@ function updateBossUlt(){
       for(let i=0;i<40;i++) burst(bossUltX+rand(-220,220), GROUND_TOP-rand(0,140), '#ff3030', 1, 6);
       // 若玩家在地面且未处于侧翼高台，受重创
       const onHigh = player.y+player.h < GROUND_TOP-90;
-      if(!player.dead && !onHigh && Math.abs((player.x+player.w/2)-bossUltX)<240){ player.invuln=0; damagePlayer(26, bossUltX); }
+      if(!player.dead && !onHigh && Math.abs((player.x+player.w/2)-bossUltX)<240){ player.invuln=0; damagePlayer(16, bossUltX); }
       else addFloater(player.x, player.y-20, '躲开了!', '#8ee88e', 14);
     }
   }
