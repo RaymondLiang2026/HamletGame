@@ -1183,12 +1183,13 @@ function drawOpheliaFigure(mode, t, wounded){
     ctx.strokeStyle='rgba(220,245,255,0.62)'; for(let r=11;r<31;r+=9){ ctx.beginPath(); ctx.arc(0,-4,r,0,Math.PI*2); ctx.stroke(); }
     ctx.restore(); return;
   }
-  ctx.fillStyle=punk?'#4d183e':'#d9d2e8'; ctx.beginPath(); ctx.moveTo(-10,-18); ctx.quadraticCurveTo(0,-22,10,-18); ctx.lineTo(15,0); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=punk?'#C9A0DC':'#d9d2e8'; ctx.beginPath(); ctx.moveTo(-10,-18); ctx.quadraticCurveTo(0,-22,10,-18); ctx.lineTo(15,0); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
   if(punk){
-    ctx.fillStyle='#241521'; ctx.beginPath(); ctx.moveTo(-8,-32); ctx.lineTo(-12,-8); ctx.lineTo(-5,-16); ctx.lineTo(1,-7); ctx.lineTo(6,-16); ctx.lineTo(12,-8); ctx.lineTo(8,-32); ctx.closePath(); ctx.fill();
-    px(-9,-18,5,13,'#7a2a5a'); px(3,-18,5,13,'#21131f'); px(-1,-17,3,17,'#8f2f6a');
-    ['#d85a9a','#7a3cff','#b72868'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.fillRect(-8+i*6,-13+i%2*4,4,3); });
-    ['#d85a9a','#8a4aff','#c9a24a','#efc0d0'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.beginPath(); ctx.arc(-8+i*5,-45+(i%2)*2,2.2,0,6.283); ctx.fill(); });
+    // 温柔朋克：碎花裙淡紫/玫瑰金/白，配色柔和不恐怖；凌乱鲜花编发（浅黄/粉），眼影淡紫，表情迷离
+    ctx.fillStyle='#B98FCF'; ctx.beginPath(); ctx.moveTo(-8,-32); ctx.lineTo(-12,-8); ctx.lineTo(-5,-16); ctx.lineTo(1,-7); ctx.lineTo(6,-16); ctx.lineTo(12,-8); ctx.lineTo(8,-32); ctx.closePath(); ctx.fill();
+    px(-9,-18,5,13,'#E8A0A0'); px(3,-18,5,13,'#C9A0DC'); px(-1,-17,3,17,'#F3B6C6');
+    ['#F3B6C6','#F5D97A','#F5EEF7'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.fillRect(-8+i*6,-13+i%2*4,4,3); });
+    ['#F5D97A','#F3B6C6','#FFF6C0','#FFFFFF'].forEach((c,i)=>{ ctx.fillStyle=c; ctx.beginPath(); ctx.arc(-8+i*5,-45+(i%2)*2,2.4,0,6.283); ctx.fill(); });
   } else {
     ctx.fillStyle='#efe3d2'; ctx.beginPath(); ctx.moveTo(-11,-18); ctx.lineTo(11,-18); ctx.lineTo(14,0); ctx.lineTo(-14,0); ctx.closePath(); ctx.fill();
     px(-6,-31,12,16,'#cfd9ed'); px(4,-31,2,16,'#f3eef5');
@@ -1196,7 +1197,7 @@ function drawOpheliaFigure(mode, t, wounded){
     px(6,-42,3,13,'#5b3a2b'); px(-8,-40,3,12,'#6f4734');
   }
   ctx.fillStyle=punk?'#e4c4d0':'#f3d8bd'; ctx.beginPath(); ctx.ellipse(0,-39,6,7.5,0,0,6.283); ctx.fill();
-  if(punk){ ctx.fillStyle='rgba(35,18,38,.75)'; ctx.fillRect(-4,-40,3,2); ctx.fillRect(2,-40,3,2); ctx.fillStyle='#9b214f'; ctx.fillRect(-3,-34,6,1.5); }
+  if(punk){ ctx.fillStyle='rgba(178,143,207,.85)'; ctx.fillRect(-4,-40,3,2); ctx.fillRect(2,-40,3,2); ctx.fillStyle='#E29A9A'; ctx.fillRect(-3,-34,6,1.5); }
   else { ctx.fillStyle='#3a2a28'; ctx.fillRect(-4,-40,2,2); ctx.fillRect(3,-40,2,2); ctx.fillStyle='#ba6f72'; ctx.fillRect(-2,-34,4,1.3); }
   px(7,-27,3,3,punk?'#e4c4d0':'#f3d8bd');
   ctx.restore();
@@ -1230,6 +1231,12 @@ function drawPunkOpheliaLayer(){
   const po=level&&level.punkOphelia; if(!po) return;
   ctx.save(); ctx.translate(po.x, GROUND_TOP); ctx.scale(po.dir||1,1); ctx.globalAlpha=0.92;
   drawOpheliaFigure('punk', frame, false);
+  ctx.restore();
+}
+function drawCourtOpheliaLayer(){
+  const co=level&&level.courtOphelia; if(!co) return;
+  ctx.save(); ctx.translate(co.x, GROUND_TOP); ctx.scale(co.dir||1,1); ctx.globalAlpha=0.96;
+  drawOpheliaFigure('normal', frame, false);
   ctx.restore();
 }
 
@@ -1867,6 +1874,8 @@ function buildAct(idx){
     lv=buildStandard({seed:202, width:5600, enemies:['patrol','archer','shield'], enemyChance:0.55, pitBase:0.12, pitHazard:'spike'});
     // 亡魂之弓：本幕前段拾取（关卡开始不久即出现）
     lv.bowPickup={x:lv.width*0.12, y:GROUND_TOP-40, w:34, h:34, taken:false};
+    // 正常形象奥菲莉亚：宫廷裙装、发型整洁，慢速温柔徘徊，仅作场景 NPC 装饰
+    lv.courtOphelia={ baseX:lv.width*0.30, x:lv.width*0.30, phase:0, dir:1 };
     lv.segments=[{x:0,name:'宫廷回廊'},{x:lv.width/3,name:'追逐奥菲莉亚'},{x:lv.width*2/3,name:'小丑的舞台'}];
     appendBossArena(lv,'clown',{completesLevel:true});
   } else if(idx===ACT_ESCAPE){ // 第三幕 逃亡 —— 疯朋克奥菲莉亚背景游荡；关底双人小 Boss 罗森格兰兹/吉尔登斯顿；后段彩蛋入口
@@ -2032,6 +2041,8 @@ function renderStory(){
     html+='<p class="'+pc.cls+'" style="animation-delay:'+(i*45)+'ms">'+escapeHtml(pc.text)+'</p>';
   }
   dom.storyBody.innerHTML=html;
+  // 文字超出固定高度时自动滚到底部，保证最新出现的对白始终可见（按钮区固定在卡片底部不受影响）
+  dom.storyBody.scrollTop = dom.storyBody.scrollHeight;
 }
 function renderStoryPortrait(){
   const pc = document.getElementById('portraitCanvas');
@@ -2128,19 +2139,19 @@ function opheliaPortraitMode(act){
 function drawVectorOpheliaPortrait(c, mode, active){
   const ghost=mode==='ghost', punk=mode==='punk';
   if(ghost){ c.globalAlpha*=.82; }
-  c.fillStyle=ghost?'rgba(135,205,255,.34)':(punk?'rgba(40,12,38,.52)':'rgba(242,220,205,.5)'); c.beginPath(); c.ellipse(0,6,24,76,0,0,6.283); c.fill();
-  const dress=ghost?'rgba(175,225,255,.52)':(punk?'#4b173d':'#e9d9e8');
+  c.fillStyle=ghost?'rgba(135,205,255,.34)':(punk?'rgba(201,160,220,.42)':'rgba(242,220,205,.5)'); c.beginPath(); c.ellipse(0,6,24,76,0,0,6.283); c.fill();
+  const dress=ghost?'rgba(175,225,255,.52)':(punk?'#C9A0DC':'#e9d9e8');
   c.fillStyle=dress; c.beginPath(); c.moveTo(-20,-18); c.quadraticCurveTo(0,-26,21,-18); c.lineTo(35,76); c.lineTo(-35,76); c.closePath(); c.fill();
-  if(punk){ c.fillStyle='#1b101c'; c.beginPath(); c.moveTo(-22,-19); c.lineTo(-30,52); c.lineTo(-5,20); c.lineTo(4,52); c.lineTo(15,18); c.lineTo(31,52); c.lineTo(22,-19); c.closePath(); c.fill(); c.strokeStyle='#8f2f6a'; c.lineWidth=1.2; c.beginPath(); c.moveTo(-18,0); c.lineTo(20,40); c.stroke(); }
+  if(punk){ c.fillStyle='#E8A0A0'; c.beginPath(); c.moveTo(-22,-19); c.lineTo(-30,52); c.lineTo(-5,20); c.lineTo(4,52); c.lineTo(15,18); c.lineTo(31,52); c.lineTo(22,-19); c.closePath(); c.fill(); c.strokeStyle='#F5EEF7'; c.lineWidth=1.2; c.beginPath(); c.moveTo(-18,0); c.lineTo(20,40); c.stroke(); }
   else if(ghost){ c.strokeStyle='rgba(220,250,255,.7)'; c.lineWidth=1; for(let i=-2;i<=2;i++) { c.beginPath(); c.moveTo(i*5,-62); c.bezierCurveTo(i*9,-36,i*4,-16,i*7,20); c.stroke(); } }
   else { c.fillStyle='#f5ecd8'; c.beginPath(); c.moveTo(-24,-18); c.lineTo(24,-18); c.lineTo(28,66); c.lineTo(-28,66); c.closePath(); c.fill(); }
-  c.fillStyle=ghost?'rgba(220,248,255,.72)':(punk?'#ead0dc':'#f5d7bd'); c.beginPath(); c.ellipse(0,-42,13,17,0,0,6.283); c.fill();
-  if(punk){ c.fillStyle='#25141f'; c.beginPath(); c.moveTo(-20,-46); c.quadraticCurveTo(-8,-72,12,-61); c.quadraticCurveTo(28,-48,13,-20); c.lineTo(7,-43); c.lineTo(-7,-25); c.lineTo(-11,-42); c.lineTo(-20,-25); c.closePath(); c.fill(); ['#d85a9a','#8a4aff','#e4c45a','#b72868'].forEach((color,i)=>{ c.fillStyle=color; c.beginPath(); c.arc(-13+i*8,-61+(i%2)*4,3,0,6.283); c.fill(); }); }
+  c.fillStyle=ghost?'rgba(220,248,255,.72)':(punk?'#f0d8de':'#f5d7bd'); c.beginPath(); c.ellipse(0,-42,13,17,0,0,6.283); c.fill();
+  if(punk){ c.fillStyle='#B98FCF'; c.beginPath(); c.moveTo(-20,-46); c.quadraticCurveTo(-8,-72,12,-61); c.quadraticCurveTo(28,-48,13,-20); c.lineTo(7,-43); c.lineTo(-7,-25); c.lineTo(-11,-42); c.lineTo(-20,-25); c.closePath(); c.fill(); ['#F5D97A','#F3B6C6','#FFF6C0','#FFFFFF'].forEach((color,i)=>{ c.fillStyle=color; c.beginPath(); c.arc(-13+i*8,-61+(i%2)*4,3,0,6.283); c.fill(); }); }
   else if(ghost){ c.strokeStyle='rgba(210,242,255,.78)'; c.lineWidth=2; c.beginPath(); c.moveTo(-10,-58); c.bezierCurveTo(-27,-37,-19,-10,-25,12); c.moveTo(11,-58); c.bezierCurveTo(28,-35,19,-8,25,14); c.stroke(); }
   else { c.fillStyle='#5b3a2b'; c.beginPath(); c.moveTo(-15,-48); c.quadraticCurveTo(0,-64,16,-49); c.lineTo(13,-24); c.quadraticCurveTo(2,-30,-12,-23); c.closePath(); c.fill(); c.fillRect(10,-47,5,26); }
-  c.fillStyle=ghost?'rgba(30,60,82,.74)':(punk?'#251128':'#3a2a28'); c.fillRect(-6,-43,3,2); c.fillRect(4,-43,3,2);
-  c.fillStyle=punk?'#9b214f':'#b86b72'; c.fillRect(-4,-33,8,2);
-  if(active){ c.strokeStyle=ghost?'rgba(220,250,255,.8)':(punk?'rgba(216,90,154,.75)':'rgba(232,194,90,.58)'); c.lineWidth=1.3; c.beginPath(); c.arc(0,-42,20,0,6.283); c.stroke(); }
+  c.fillStyle=ghost?'rgba(30,60,82,.74)':(punk?'rgba(178,143,207,.9)':'#3a2a28'); c.fillRect(-6,-43,3,2); c.fillRect(4,-43,3,2);
+  c.fillStyle=punk?'#E29A9A':'#b86b72'; c.fillRect(-4,-33,8,2);
+  if(active){ c.strokeStyle=ghost?'rgba(220,250,255,.8)':(punk?'rgba(201,160,220,.8)':'rgba(232,194,90,.58)'); c.lineWidth=1.3; c.beginPath(); c.arc(0,-42,20,0,6.283); c.stroke(); }
 }
 function drawVectorHamletPortrait(c, act, gold, doom){
   const coat=doom?'#100818':'#09090d', hi=doom?'#30203c':'#20232a', trim=gold?'#d6ae45':(doom?'#5d3f78':'#45424e');
@@ -2615,13 +2626,37 @@ function placeBonusExitPortal(lv, bonusAct){
   }
   lv.exitPortal=portal;
 }
+// 为趣味关入口高台寻找“无障碍安全落点”：必须落在一整块连续地面上（主线无需跳跃通过），
+// 且高台左右预留余量内没有坑/地刺，绝不放在必经跳跃平台或坑口上，避免主线前进误触入口。
+function findSafeBonusPlatformX(lv, platformW, fallbackX){
+  const margin = 180;                          // 高台距坑/地面边缘的安全余量（> 触发框半宽 + 跳跃余量）
+  const minX = 380;                            // 避开出生点附近
+  const maxX = lv.width * 0.55;                // 优先前中段，便于玩家发现
+  const grounds = (lv.platforms||[])
+    .filter(p=>p.type==='ground')
+    .slice().sort((a,b)=>a.x-b.x);
+  for(const g of grounds){
+    const lo = Math.max(g.x + margin, minX);              // 该地面段可放置高台左边界的下限
+    const hi = Math.min(g.x + g.w - margin - platformW, maxX); // 上限（右侧同样留余量）
+    if(hi < lo) continue;                                 // 该段太窄，跳过
+    const px = Math.round((lo + hi) / 2);
+    // 校验：高台覆盖范围 ±margin 内没有任何坑/地刺/毒等 hazard
+    const hasHazard = (lv.hazards||[]).some(h=>
+      (h.x < px + platformW + margin) && (h.x + (h.w||0) > px - margin));
+    if(hasHazard) continue;
+    return px;
+  }
+  return fallbackX;
+}
 function createBonusEntrance(lv, mainAct){
   const bonusAct = mainAct===ACT_ENGLAND ? 4 : (mainAct===ACT_FINAL ? 5 : mainAct+1);
   const cfg = BONUS_PLATFORM_CONFIGS[mainAct-1] || BONUS_PLATFORM_CONFIGS[0];
-  const platformX = Math.min(Math.max(40, cfg.platformX), Math.max(40, lv.width-220));
-  const platformY = GROUND_TOP - 88;
   const platformW = 160;
   const platformH = 14;
+  const fallbackX = Math.min(Math.max(40, cfg.platformX), Math.max(40, lv.width-220));
+  const platformX = findSafeBonusPlatformX(lv, platformW, fallbackX);
+  // 高台高度：低于跳跃极限（GROUND_TOP-118 可达），高于步行头顶（GROUND_TOP-44），主动跳可上、走路不撞
+  const platformY = GROUND_TOP - 88;
   lv.platforms.push({x:platformX,y:platformY,w:platformW,h:platformH,type:'plat',color:'#c8a84b'});
   const safeMin = platformX - 180;
   const safeMax = platformX + platformW + 180;
@@ -3615,6 +3650,7 @@ function updatePlay(){
   updateTriggersAndCheckpoints();
   Dialog.update();                 // 非阻断顶部对白栏（不暂停游戏）
   updatePunkOphelia();             // 第三幕背景疯癫奥菲莉亚
+  updateCourtOphelia();            // 第二幕背景正常奥菲莉亚（宫廷 NPC）
   // 湖畔彩蛋倒计时
   if(actIndex===ACT_LAKE){ level.timeLeft -= 1/60; dom.timer.textContent=Math.max(0,Math.ceil(level.timeLeft));
     if(level.rescue && level.rescue.saved){}
@@ -3644,8 +3680,9 @@ function updatePlay(){
 // 第三幕背景：疯癫朋克奥菲莉亚缓慢游荡 + 疯话
 function updatePunkOphelia(){
   const po=level.punkOphelia; if(!po) return;
-  po.phase+=0.012;
-  const span=Math.max(420, level.width*0.72);
+  po.phase+=0.010;
+  // 局部徘徊：跨度收窄，峰值速度 ≈ 0.5*span*phaseInc = 0.5*900*0.010 = 4.5px/帧 ≈ 1.3x 正常速度（不超 2x）
+  const span=Math.min(900, Math.max(360, level.width*0.16));
   const nextX = po.baseX + (Math.sin(po.phase)*0.5+0.5)*span;
   po.dir = nextX>=po.x ? 1 : -1;
   po.x = nextX;
@@ -3659,8 +3696,18 @@ function updatePunkOphelia(){
     ];
     po.lineI=(po.lineI+1)%madLines.length;
     const screenX=(po.x-camX)*ZOOM;
-    if(screenX>W*0.34 && screenX<W*0.66){ const line=madLines[po.lineI]; addFloater(po.x, GROUND_TOP-92, line.zh+' / '+line.en, '#d85a9a', 11); Sound.battleCue('punkLaugh'); }
+    if(screenX>W*0.34 && screenX<W*0.66){ const line=madLines[po.lineI]; addFloater(po.x, GROUND_TOP-92, line.zh+' / '+line.en, '#C9A0DC', 11); Sound.battleCue('punkLaugh'); }
   }
+}
+// 第二幕背景：正常形象奥菲莉亚（宫廷裙装）缓慢温柔徘徊，仅作场景 NPC 装饰，不参与战斗
+function updateCourtOphelia(){
+  const co=level.courtOphelia; if(!co) return;
+  co.phase+=0.006;
+  // 峰值速度 ≈ 0.5*span*phaseInc = 0.5*560*0.006 = 1.68px/帧 ≈ 0.5x 正常速度（温柔飘逸 0.4-0.6x）
+  const span=Math.min(560, Math.max(300, level.width*0.11));
+  const nextX = co.baseX + (Math.sin(co.phase)*0.5+0.5)*span;
+  co.dir = nextX>=co.x ? 1 : -1;
+  co.x = nextX;
 }
 
 function finishBonus(){
@@ -3765,6 +3812,7 @@ function drawWorld(){
     ctx.fillStyle='#6a5a52'; ctx.fillRect(r.x,r.y,r.w,r.h); ctx.fillStyle='#4a3e38'; ctx.fillRect(r.x+3,r.y+3,r.w-6,r.h-6); }
   // 独立背景角色层：第三幕朋克奥菲莉亚只游走不碰撞
   drawPunkOpheliaLayer();
+  drawCourtOpheliaLayer();         // 第二幕正常奥菲莉亚背景 NPC
   // 抛射物
   for(const pr of projectiles){ drawProjectile(pr); }
   // 敌人
