@@ -76,6 +76,13 @@ window.addEventListener('keydown', e=>{
     return;
   }
 }, true);
+// 二级保险：document 捕获阶段再次强制拦截 Esc（exitBonus 幂等），确保任何状态下都能退出趣味关卡。
+document.addEventListener('keydown', e=>{
+  if((e.code==='Escape'||e.key==='Escape'||e.keyCode===27) && bonusLevel){
+    exitBonus(false);
+    e.stopImmediatePropagation(); e.preventDefault();
+  }
+}, true);
 
 window.addEventListener('keydown', e=>{
   const k = KEYMAP[e.code];
@@ -2509,51 +2516,71 @@ function buildBonusLevel(bonusAct){
     platforms:[], hazards:[], movers:[], breakables:[], chests:[], enemySpawns:[], checkpoints:[], triggers:[], pickups:[], rockEmitters:[],
     segments:[{x:0,name:'隐藏挑战（可选）'}], goalX:1640, playerStart:{x:70,y:GROUND_TOP}, completeMode:'bonus', bonusAct:n, bonusFinished:false };
   if(bonusAct===1){
-    lv.width=980; lv.height=900; lv.goalX=492; lv.playerStart={x:80,y:GROUND_TOP};
-    lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    const steps=[
-      [60,60,130],[220,120,130],[80,180,130],[240,240,130],[60,300,130],
-      [230,360,130],[70,420,140],[240,480,140],[80,540,140],[250,600,140],[90,660,150]
-    ];
-    steps.forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:s[2],h:14,type:'plat'}));
-    lv.platforms.push({x:448,y:GROUND_TOP-748,w:190,h:16,type:'plat',board:true});
+    // 第一幕：Z 字形登高挑战 —— 左右来回逐层跳跃，踩上顶点平台通关
+    lv.width=720; lv.height=760; lv.goalX=360; lv.playerStart={x:80,y:GROUND_TOP};
+    lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); // 全宽兜底地面（失手可重来）
+    const LX=100, RX=lv.width/2-60, PW=160; // 左列 x / 右列 x / 平台宽度
+    // [x, 距地面高度]，左右交替，每层 85px（≤95 普通跳跃可达）
+    [[RX,85],[LX,170],[RX,255],[LX,340],[RX,425]].forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:PW,h:14,type:'plat'}));
+    lv.platforms.push({x:40,y:GROUND_TOP-510,w:lv.width-80,h:16,type:'plat',board:true}); // 顶点平台（近全宽胜利区）
   } else if(bonusAct===2){
-    lv.width=2100; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    ['patrol','patrol','shield','patrol','shield'].forEach((type,i)=>lv.enemySpawns.push({type,x:420+i*260,y:GROUND_TOP}));
-    lv.platforms.push({x:300,y:GROUND_TOP-80,w:100,h:14,type:'plat'});
-    lv.platforms.push({x:560,y:GROUND_TOP-60,w:100,h:14,type:'plat'});
-    lv.platforms.push({x:880,y:GROUND_TOP-100,w:110,h:14,type:'plat'});
-    lv.platforms.push({x:1150,y:GROUND_TOP-70,w:100,h:14,type:'plat'});
-    lv.platforms.push({x:1450,y:GROUND_TOP-90,w:110,h:14,type:'plat'});
-    lv.platforms.push({x:1750,y:GROUND_TOP-60,w:100,h:14,type:'plat'});
-    lv.enemySpawns.push({type:'archer',x:560,y:GROUND_TOP-60});
-    lv.enemySpawns.push({type:'archer',x:1150,y:GROUND_TOP-70});
-    lv.pickups.push({x:760,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
-    lv.pickups.push({x:1320,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
-    lv.pickups.push({x:lv.width-180,y:GROUND_TOP-18,w:12,h:12,kind:'bonusCoin',taken:false});
+    // 第二幕：左右来回消灭敌人 —— 三波（左/中/右），高低台交错，全灭即胜
+    lv.width=1600; lv.goalX=lv.width-140;
+    lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.platforms.push({x:300,y:GROUND_TOP-90,w:150,h:14,type:'plat'});
+    lv.platforms.push({x:760,y:GROUND_TOP-100,w:150,h:14,type:'plat'});
+    lv.platforms.push({x:1220,y:GROUND_TOP-90,w:150,h:14,type:'plat'});
+    // 第一波（左区）
+    lv.enemySpawns.push({type:'patrol',x:220,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'patrol',x:400,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'archer',x:360,y:GROUND_TOP-90});
+    // 第二波（中区）
+    lv.enemySpawns.push({type:'shield',x:720,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'patrol',x:920,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'archer',x:820,y:GROUND_TOP-100});
+    // 第三波（右区）
+    lv.enemySpawns.push({type:'patrol',x:1200,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'shield',x:1380,y:GROUND_TOP});
+    lv.enemySpawns.push({type:'patrol',x:1320,y:GROUND_TOP-90});
+    lv.pickups.push({x:600,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
+    lv.pickups.push({x:1080,y:GROUND_TOP-18,w:12,h:12,kind:'heart',taken:false});
   } else if(bonusAct===3){
-    lv.width=2520; lv.platforms.push({x:0,y:GROUND_TOP,w:230,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.platforms.push({x:lv.width-300,y:GROUND_TOP,w:300,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    lv.hazards.push({x:230,y:GROUND_TOP+10,w:lv.width-530,h:LEVEL_H-GROUND_TOP,type:'spike'});
-    for(let i=0;i<13;i++){ lv.movers.push({x:330+i*150,y:GROUND_TOP-42-(i%3)*26,w:96,h:12,type:'plat',axis:'y',range:24,speed:0.65,phase:i*.7,baseX:330+i*150,baseY:GROUND_TOP-42-(i%3)*26}); }
+    // 第三幕：横向移动平台跳跃 —— 移动平台 + 固定休息台交替，左到右推进
+    lv.width=2340; lv.goalX=2160;
+    lv.platforms.push({x:0,y:GROUND_TOP,w:260,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.platforms.push({x:2040,y:GROUND_TOP,w:300,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.hazards.push({x:260,y:GROUND_TOP+10,w:1780,h:LEVEL_H-GROUND_TOP,type:'spike'});
+    const RESTY=GROUND_TOP-46;
+    // 固定休息台（给玩家喘息空间）
+    [[300,120],[740,120],[1180,120],[1620,120]].forEach(r=>lv.platforms.push({x:r[0],y:RESTY,w:r[1],h:14,type:'plat'}));
+    // 横向移动平台（宽 96、速度 0.65、来回 range 70）
+    [520,960,1400,1840].forEach((bx,i)=>{ const by=RESTY-(i%2)*24; lv.movers.push({x:bx,y:by,w:96,h:12,type:'plat',axis:'x',range:70,speed:0.65,phase:i*0.9,baseX:bx,baseY:by}); });
     lv.deaths=0;
   } else if(bonusAct===4){
-    lv.width=2100; lv.goalX=1960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'});
-    [[250,70,116],[420,130,120],[600,190,126],[790,130,120],[970,70,116],[1135,128,124],[1325,186,130],[1515,124,126]].forEach(w=>lv.platforms.push({x:w[0],y:GROUND_TOP-w[1],w:w[2],h:14,type:'plat'}));
-    lv.platforms.push({x:800,y:GROUND_TOP-180,w:110,h:14,type:'plat'});
-    lv.platforms.push({x:940,y:GROUND_TOP-210,w:90,h:14,type:'plat'});
-    lv.platforms.push({x:1080,y:GROUND_TOP-180,w:90,h:14,type:'plat'});
-    lv.triggers.push({x:1080,y:GROUND_TOP-200,w:90,h:40,type:'hint',fired:false,key:'maze_dead',msg:'此路不通，换条路试试！'});
+    // 第四幕：横向障碍跑 —— 矮墙 / 坑道交替，坑内有踏脚石低路，右侧终点
+    lv.width=2100; lv.goalX=1960;
+    lv.platforms.push({x:0,y:GROUND_TOP,w:850,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.platforms.push({x:950,y:GROUND_TOP,w:750,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    lv.platforms.push({x:1800,y:GROUND_TOP,w:300,h:LEVEL_H-GROUND_TOP,type:'ground'});
+    // 矮墙（需跳过，ground 类型阻挡）
+    lv.platforms.push({x:520,y:GROUND_TOP-70,w:44,h:70,type:'ground'});
+    lv.platforms.push({x:1350,y:GROUND_TOP-84,w:44,h:84,type:'ground'});
+    // 坑道中的踏脚石（可走低路跨坑）
+    lv.platforms.push({x:870,y:GROUND_TOP-40,w:60,h:14,type:'plat'});
+    lv.platforms.push({x:1720,y:GROUND_TOP-40,w:60,h:14,type:'plat'});
+    // 第二道矮墙前的高路平台（可绕过）
+    lv.platforms.push({x:1230,y:GROUND_TOP-72,w:110,h:14,type:'plat'});
   } else {
-    lv.width=960; lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); lv.goalX=760; lv.monologue={t:0,typed:0,done:false,fade:0};
-    lv._act5T=0;
-    lv._act5Toys=[
-      {type:'block', x:W*0.38, y:H*0.3, groundY:H*0.72, vy:-6, color:'#e84040'},
-      {type:'block', x:W*0.62, y:H*0.25, groundY:H*0.72, vy:-8, color:'#4080e8'},
-      {type:'block', x:W*0.55, y:H*0.2, groundY:H*0.72, vy:-5, color:'#40c840'},
-      {type:'soldier', x:W*0.42, y:H*0.3, groundY:H*0.71, vy:-4},
-      {type:'soldier', x:W*0.58, y:H*0.3, groundY:H*0.715, vy:-5},
-      {type:'carousel', x:W*0.5, y:H*0.71, groundY:H*0.71, rot:0}
-    ];
+    // 第五幕：横向+垂直混合 —— 前段横向推进，后段 Z 字形登高（8 层）至顶点特效区
+    lv.width=1200; lv.height=760; lv.goalX=360;
+    lv.platforms.push({x:0,y:GROUND_TOP,w:lv.width,h:LEVEL_H-GROUND_TOP,type:'ground'}); // 全宽兜底地面
+    // 前段横向跳台
+    lv.platforms.push({x:380,y:GROUND_TOP-70,w:110,h:14,type:'plat'});
+    lv.platforms.push({x:560,y:GROUND_TOP-70,w:110,h:14,type:'plat'});
+    // 后段 Z 字形登高（左列 740 / 右列 920，每层 66px，共 7 层 + 顶点）
+    const LX=740, RX=920, PW=150;
+    [[RX,66],[LX,132],[RX,198],[LX,264],[RX,330],[LX,396],[RX,462]].forEach(s=>lv.platforms.push({x:s[0],y:GROUND_TOP-s[1],w:PW,h:14,type:'plat'}));
+    lv.platforms.push({x:700,y:GROUND_TOP-528,w:400,h:16,type:'plat',board:true}); // 顶点特效区
   }
   return lv;
 }
@@ -3621,12 +3648,21 @@ function updateBonusPlay(){
   if(player.dead) return;
   if(bonusLevel.act!==5){ updateEnemies(); updateProjectiles(); updatePickups(); }
   if(bonusLevel.act===5) updateBonusMonologue();
-  if(bonusLevel.act===1){
-    const goalPlatY = level.platforms.find(p=>p.board)?.y ?? (GROUND_TOP - 720);
-    if(player.x+player.w>level.goalX && player.y<goalPlatY+60) finishBonus();
-  } else if(bonusLevel.act===5){
-    if(level.monologue && level.monologue.done) finishBonus();
-  } else if(player.x+player.w>level.goalX && (!level.monologue || level.monologue.done)) finishBonus();
+  if(bonusLevel.act===1 || bonusLevel.act===5){
+    // 登高关：踩上顶点平台（脚部落在平台面 ±16px 且横向处于平台范围内）才算通关
+    const top=level.platforms.find(p=>p.board);
+    if(top && player.onGround){
+      const feet=player.y+player.h;
+      if(player.x+player.w>top.x && player.x<top.x+top.w && Math.abs(feet-top.y)<=16){
+        if(!level.bonusFinished && bonusLevel.act===5){ flash('#e8c25a',20); shake(6,20); } // 第五幕顶点特效
+        finishBonus();
+      }
+    }
+  } else if(bonusLevel.act===2){
+    if(enemies.length===0) finishBonus(); // 消灭全部敌人即通关
+  } else if(player.x+player.w>level.goalX){
+    finishBonus();
+  }
   updateCamera();
   if(++hudTick%4===0) updateHUD();
 }
