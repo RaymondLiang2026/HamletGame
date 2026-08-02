@@ -326,7 +326,105 @@ const Sound = {
     else if(/刺客/.test(text)) kind='assassin';
     if(kind){ this.stageAmbience(4.0); this.syntheticVoice(kind,lineIndex||0); }
   }); },
-  monologueVoiceCue(lineIndex){ this.safe(function(){ this.stageAmbience(4.6); this.syntheticVoice('hamletStage', lineIndex||0); }); },
+  monologueVoiceCue(lineIndex){ this.safe(function(){ this.monologueSpeak(lineIndex||0); }); },
+  // ===== 第五幕独白 · 合成低沉英伦男声（卷福式）朗读台词 =====
+  // 基频100–130Hz，正弦+少量锯齿(0.8:0.2)；ADSR(a.02 d.1 s.85 r.3)；6Hz±3Hz颤音0.2s后渐入；DelayNode 0.15s/反馈0.3/湿声~30%舞台混响；每行1.5–3s
+  monologueSpeak(lineIndex){ this.safe(function(){
+    if(!this.ctx) return;
+    const ctx=this.ctx, t=ctx.currentTime, idx=lineIndex||0;
+    const lines=(typeof ACT5_MONOLOGUE!=='undefined')?ACT5_MONOLOGUE:null;
+    const en=(lines&&lines[idx]&&lines[idx].en)?lines[idx].en:'';
+    const dur=Math.min(3.0, Math.max(1.5, 1.55 + en.length*0.02));   // 依台词长度 1.5–3s
+    const f0=112 + ((idx%3)-1)*9;                                    // 100–130Hz 基频，逐行微起伏
+    // —— 舞台混响：DelayNode 0.15s + 反馈0.3 + 湿声~30% ——
+    const bus=ctx.createGain(), dry=ctx.createGain(), wet=ctx.createGain(), dl=ctx.createDelay(1.0), fb=ctx.createGain();
+    dry.gain.value=0.7; wet.gain.value=0.3; dl.delayTime.value=0.15; fb.gain.value=0.3;
+    bus.connect(dry); bus.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet);
+    dry.connect(this.sg); wet.connect(this.sg);
+    // —— ADSR 包络（attack .02 / decay .1 → sustain .85 / release .3）——
+    const env=ctx.createGain(); env.connect(bus);
+    const peak=0.20, sus=peak*0.85;
+    env.gain.setValueAtTime(0.0001,t);
+    env.gain.exponentialRampToValueAtTime(peak,t+0.02);                       // attack
+    env.gain.exponentialRampToValueAtTime(Math.max(0.0002,sus),t+0.12);       // decay→sustain(.85)
+    env.gain.setValueAtTime(Math.max(0.0002,sus),t+Math.max(0.14,dur-0.3));
+    env.gain.exponentialRampToValueAtTime(0.0001,t+dur);                      // release .3s
+    // —— 颤音 LFO：6Hz，±3Hz，0.2s 后渐入 ——
+    const lfo=ctx.createOscillator(); lfo.type='sine'; lfo.frequency.value=6;
+    const lfoG=ctx.createGain();
+    lfoG.gain.setValueAtTime(0.0001,t); lfoG.gain.setValueAtTime(0.0001,t+0.2); lfoG.gain.linearRampToValueAtTime(3,t+0.6);
+    lfo.connect(lfoG); lfo.start(t); lfo.stop(t+dur+0.05);
+    // —— 主体：正弦为主 + 少量锯齿（0.8:0.2），句尾轻微下滑更似人声 ——
+    const oSine=ctx.createOscillator(), gSine=ctx.createGain();
+    oSine.type='sine'; oSine.frequency.setValueAtTime(f0,t); oSine.frequency.linearRampToValueAtTime(f0*0.92,t+dur);
+    gSine.gain.value=0.8; lfoG.connect(oSine.frequency); oSine.connect(gSine); gSine.connect(env);
+    const oSaw=ctx.createOscillator(), gSaw=ctx.createGain(), lp=ctx.createBiquadFilter();
+    oSaw.type='sawtooth'; oSaw.frequency.setValueAtTime(f0,t); oSaw.frequency.linearRampToValueAtTime(f0*0.92,t+dur);
+    gSaw.gain.value=0.2; lp.type='lowpass'; lp.frequency.value=1400; lp.Q.value=0.7;
+    lfoG.connect(oSaw.frequency); oSaw.connect(gSaw); gSaw.connect(lp); lp.connect(env);
+    oSine.start(t); oSine.stop(t+dur+0.05); oSaw.start(t); oSaw.stop(t+dur+0.05);
+  }); },
+  // ===== 第五幕独白 · NT Live 风格管弦配乐（弦乐床+铜管主题+高音弦律+大鼓）=====
+  // 全程贯穿：慢速渐入→（末行 tutti）→慢速渐出；循环时长≥45s；所有音量变化经 exponentialRampToValueAtTime，绝不硬切
+  monologueScore(){ this.safe(function(){
+    if(!this.ctx || this._monoScore) return;                        // 防重复叠加
+    const ctx=this.ctx, t0=ctx.currentTime;
+    const bus=ctx.createGain();
+    bus.gain.setValueAtTime(0.0001,t0); bus.gain.exponentialRampToValueAtTime(0.6,t0+3.0);   // 慢速渐入
+    bus.connect(this.master);
+    const S={ bus:bus, nodes:[] }; this._monoScore=S;
+    const reg=n=>{ S.nodes.push(n); return n; };
+    const beat=0.5, total=48, nBeats=Math.ceil(total/beat);         // 96拍≈48s（≥45s）
+    // c 小三和弦：root C3=130.81 / 三度 Eb3=155.56 / 五度 G3=196.00
+    const chord=[130.81,155.56,196.00];
+    // —— 弦乐床：三独立振荡器持续音，低音量，4Hz 颤音 ——
+    chord.forEach((f,i)=>{
+      const o=ctx.createOscillator(); o.type='sawtooth'; o.frequency.value=f;
+      const filt=ctx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value=900; filt.Q.value=0.5;
+      const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(0.05-i*0.008,t0+2.4);
+      const trem=ctx.createOscillator(); trem.type='sine'; trem.frequency.value=4;
+      const tremG=ctx.createGain(); tremG.gain.value=0.012;
+      trem.connect(tremG); tremG.connect(g.gain);
+      o.connect(filt); filt.connect(g); g.connect(bus);
+      o.start(t0); o.stop(t0+total+0.5); trem.start(t0); trem.stop(t0+total+0.5); reg(o); reg(trem);
+    });
+    // —— 大鼓：每4拍一次 50–80Hz 脉冲 ——
+    for(let b=0;b<nBeats;b+=4){ const t=t0+b*beat;
+      const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(78,t); o.frequency.exponentialRampToValueAtTime(50,t+0.22);
+      const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.5,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
+      o.connect(g); g.connect(bus); o.start(t); o.stop(t+0.6);
+    }
+    // —— 铜管主题：200–350Hz 锯齿，附点节奏，低通滤波 ——
+    const brassSeq=[220,0,262,294,0,330,294,262];
+    const bf=ctx.createBiquadFilter(); bf.type='lowpass'; bf.frequency.value=1100; bf.Q.value=0.8; bf.connect(bus);
+    for(let b=0;b<nBeats;b++){ const f=brassSeq[b%brassSeq.length]; if(!f) continue;
+      const dotted=((b%2)===0)?beat*1.5:beat*0.5, t=t0+b*beat;      // 附点/短 交替
+      const o=ctx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(f,t);
+      const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.07,t+0.04); g.gain.exponentialRampToValueAtTime(0.0001,t+dotted*0.95);
+      o.connect(g); g.connect(bf); o.start(t); o.stop(t+dotted+0.05);
+    }
+    // —— 高音弦律：600–800Hz 正弦旋律 ——
+    const melo=[659,784,698,0,659,587,659,0];
+    for(let b=0;b<nBeats;b++){ const f=melo[b%melo.length]; if(!f) continue;
+      const t=t0+b*beat, o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(f,t);
+      const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.045,t+0.08); g.gain.exponentialRampToValueAtTime(0.0001,t+beat*0.9);
+      o.connect(g); g.connect(bus); o.start(t); o.stop(t+beat+0.05);
+    }
+  }); },
+  // 末行满编 tutti：总线音量指数上扬（绝不硬切）
+  monologueScoreTutti(){ this.safe(function(){
+    if(!this._monoScore || !this.ctx) return;
+    const t=this.ctx.currentTime, g=this._monoScore.bus.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(Math.max(0.0001,g.value),t); g.exponentialRampToValueAtTime(0.92,t+2.0);
+  }); },
+  // 独白结束：总线音量指数渐出后停止全部节点
+  monologueScoreStop(){ this.safe(function(){
+    const S=this._monoScore; if(!S || !this.ctx){ this._monoScore=null; return; }
+    const t=this.ctx.currentTime, g=S.bus.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(Math.max(0.0001,g.value),t); g.exponentialRampToValueAtTime(0.0001,t+2.5); // 慢速渐出
+    setTimeout(()=>{ (S.nodes||[]).forEach(n=>{ try{ n.stop&&n.stop(); }catch{} }); try{ S.bus.disconnect(); }catch{} }, 2800);
+    this._monoScore=null;
+  }); },
   // ================= 各角色 ≥3s 个性音效 =================
   // 老哈姆雷特鬼魂：低沉回响警告声（100-200Hz，渐强后渐弱，加回响，3s）
   voiceGhost(){ this.safe(function(){ const echo=this.makeEcho(.28,.4);
@@ -707,7 +805,7 @@ const Sound = {
     o.connect(g); g.connect(this.mg); o.start(t); o.stop(t+0.36);
     this.musNoise(t,0.11,vol*0.4,'lowpass',200,1);
   },
-  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; this.custom=false; this.custMusic=null; this.stopOrchBed(); this.orchName=null; },
+  stopMusic(){ if(this.timer){ clearInterval(this.timer); this.timer=null; } this.cur=null; this.custom=false; this.custMusic=null; this.stopOrchBed(); this.orchName=null; if(this._monoScore) this.monologueScoreStop(); },
   toggle(){ this.enabled=!this.enabled; if(!this.enabled) this.stopMusic(); return this.enabled; }
 };
 (function hardenSoundAPI(){
@@ -4227,7 +4325,9 @@ function enterBonus(actNumber, entranceTrigger){
   enemies=[]; projectiles=[]; rocks=[]; particles=[]; floaters=[]; petals=[]; texts=[]; boss=null; bossStarted=false; companion=null;
   level.enemySpawns.forEach(s=>enemies.push(makeEnemy(s.type,s.x,s.y)));
   respawn={x:level.playerStart.x,y:level.playerStart.y}; camX=0; camY=0; state=STATE.PLAY; Dialog.clear();
-  dom.levelLabel.textContent='趣味支线 · '+bonusLevel.kind; dom.timerRow.style.display='none'; Sound.setMusic(ACTS[actNumber-1].music, .85);
+  dom.levelLabel.textContent='趣味支线 · '+bonusLevel.kind; dom.timerRow.style.display='none';
+  // 第五幕「决战前的独白」：以 NT Live 风格管弦配乐替代常规 BGM 贯穿全程演出
+  if(actNumber===5){ Sound.stopMusic(); Sound.monologueScore(); } else { Sound.setMusic(ACTS[actNumber-1].music, .85); }
   addFloater(player.x+60, player.y-30, '隐藏挑战开始 · Esc 放弃返回', '#e8c25a', 14);
 }
 function exitBonus(success){
@@ -5439,12 +5539,12 @@ function updateBonusMonologue(){
   for(const key in tp) m.pose[key]+=(tp[key]-m.pose[key])*k;
   // —— 台词推进（沿用 m.t 计时，中英对照逐行）——
   const lines=ACT5_MONOLOGUE, introF=70, perLine=175;
-  if(m.ending){ m.fade+=2.2; if(m.fade>=70) m.done=true; return; }
+  if(m.ending){ m.fade+=2.2; if(m.fade>=70){ m.done=true; Sound.monologueScoreStop(); Sound.setMusic(ACTS[4].music, .85); } return; } // 独白结束：停配乐并切回登高关 BGM
   if(m.t<introF) return;                // 开场聚光灯淡入
   const local=m.t-introF;
   m.line=Math.floor(local/perLine);
   m.lineT=local-m.line*perLine;
-  if(m.line<lines.length && m.line!==m.lastVoiceLine){ m.lastVoiceLine=m.line; Sound.monologueVoiceCue(m.line); }
+  if(m.line<lines.length && m.line!==m.lastVoiceLine){ m.lastVoiceLine=m.line; Sound.monologueVoiceCue(m.line); if(m.line===lines.length-1) Sound.monologueScoreTutti(); } // 末行触发满编 tutti
   if(m.line>=lines.length){ m.line=lines.length-1; m.ending=true; m.fade=0; }
 }
 function skipBonusMonologue(){
@@ -5794,22 +5894,24 @@ function _monoSpotlight(m, px){
 // 基础站立位姿（关节角度，弧度）；角度约定：腿0向下+向前，躯干0向上+前倾，手臂0下垂+前摆
 function _monoBasePose(){
   return { torso:0.02, head:0, thighF:0.06, shinF:-0.05, thighB:-0.06, shinB:-0.03,
-           shF:0.12, elF:0.12, shB:-0.12, elB:0.12 };
+           shF:0.12, elF:0.12, shB:-0.12, elB:0.12,
+           tilt:0, lean:0, handOpen:0.25, hemSway:0 };   // 扩展：重心侧倾/前后倾/前手张开度/下摆摆动
 }
 // 各动作阶段的目标位姿（状态机每帧插值逼近）
 function _monoTargetPose(m){
   switch(m.phase){
-    case 0: {                              // 踱步：双腿交替、手臂反向摆动
+    case 0: {                              // 踱步：双腿交替、手臂反向摆动 + 重心侧移
       const sw=Math.sin(m.stepT);
       return { torso:0.08, head:-0.02,
         thighF:0.05+0.48*sw,  shinF:-0.15-0.32*Math.max(0,sw),
         thighB:0.05-0.48*sw,  shinB:-0.15-0.32*Math.max(0,-sw),
-        shF:0.15-0.48*sw, elF:0.32, shB:0.15+0.48*sw, elB:0.32 };
+        shF:0.15-0.48*sw, elF:0.32, shB:0.15+0.48*sw, elB:0.32,
+        tilt:0.06*Math.sin(m.stepT*0.5), lean:0.05, handOpen:0.2, hemSway:0.5*sw };
     }
-    case 1: return { torso:0.03, head:0.0, thighF:0.06, shinF:-0.05, thighB:-0.06, shinB:-0.03, shF:0.12, elF:0.12, shB:-0.12, elB:0.12 }; // 站定
-    case 2: return { torso:0.46, head:0.28, thighF:0.86, shinF:-0.96, thighB:0.74, shinB:-1.06, shF:0.95, elF:0.95, shB:0.35, elB:0.62 }; // 蹲下俯身拾物
-    case 3: return { torso:0.10, head:0.04, thighF:0.10, shinF:-0.08, thighB:-0.08, shinB:-0.03, shF:0.20, elF:0.20, shB:-0.10, elB:0.18 }; // 起身
-    case 4: return { torso:-0.06, head:-0.19, thighF:0.05, shinF:-0.05, thighB:-0.09, shinB:-0.02, shF:1.34, elF:1.72, shB:-0.16, elB:0.14 }; // 抬手独白（掌心朝上、头微仰）
+    case 1: return { torso:0.03, head:0.0, thighF:0.06, shinF:-0.05, thighB:-0.06, shinB:-0.03, shF:0.12, elF:0.12, shB:-0.12, elB:0.12, tilt:0.04, lean:0.0, handOpen:0.25, hemSway:0.1 }; // 站定（重心微移）
+    case 2: return { torso:0.46, head:0.28, thighF:0.86, shinF:-0.96, thighB:0.74, shinB:-1.06, shF:0.95, elF:0.95, shB:0.35, elB:0.62, tilt:0.0, lean:0.5, handOpen:0.85, hemSway:-0.3 }; // 蹲下俯身拾物（前倾、伸手）
+    case 3: return { torso:0.10, head:0.04, thighF:0.10, shinF:-0.08, thighB:-0.08, shinB:-0.03, shF:0.20, elF:0.20, shB:-0.10, elB:0.18, tilt:0.0, lean:0.12, handOpen:0.5, hemSway:0.1 }; // 起身
+    case 4: return { torso:-0.06, head:-0.19, thighF:0.05, shinF:-0.05, thighB:-0.09, shinB:-0.02, shF:1.34, elF:1.72, shB:-0.16, elB:0.14, tilt:-0.05, lean:-0.08, handOpen:1.0, hemSway:0.15 }; // 抬手独白（掌心朝上、头微仰、手掌摊开）
     case 5: return _monoBasePose();        // 转身（narrow 由 turnScale 处理）
     default: return _monoBasePose();
   }
@@ -5840,24 +5942,49 @@ function _monoHamlet(m, px){
   const maxFootY=Math.max(P.footF.y, P.footB.y);
   const breath=Math.sin(frame*0.045)*1.4;      // 呼吸微动
   const gold=warm?'#c8a24a':'#5a4a72';
-  const seg=(a,b,w,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=w; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); };
+  // 锥形四边形肢体助手：a(宽wA)→b(宽wB)渐变收窄，col 主色，hi 受光侧高光；含关节圆头（肩/肘/髋/腕），肘部微弯、腕部收窄
+  const limb=(a,b,wA,wB,col,hi)=>{
+    const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1, nx=-dy/len, ny=dx/len;
+    ctx.fillStyle=col; ctx.beginPath();
+    ctx.moveTo(a.x+nx*wA*0.5, a.y+ny*wA*0.5);
+    ctx.quadraticCurveTo((a.x+b.x)/2+nx*(wA+wB)*0.28, (a.y+b.y)/2+ny*(wA+wB)*0.28, b.x+nx*wB*0.5, b.y+ny*wB*0.5); // 外侧肘部微弯
+    ctx.lineTo(b.x-nx*wB*0.5, b.y-ny*wB*0.5);
+    ctx.quadraticCurveTo((a.x+b.x)/2-nx*(wA+wB)*0.22, (a.y+b.y)/2-ny*(wA+wB)*0.22, a.x-nx*wA*0.5, a.y-ny*wA*0.5);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(a.x,a.y,wA*0.5,0,6.283); ctx.fill();   // 起点关节圆头
+    ctx.beginPath(); ctx.arc(b.x,b.y,wB*0.5,0,6.283); ctx.fill();   // 终点关节圆头（腕/踝收窄）
+    if(hi){ ctx.strokeStyle=hi; ctx.lineWidth=Math.max(1,wB*0.16); ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(a.x+nx*wA*0.30, a.y+ny*wA*0.30); ctx.lineTo(b.x+nx*wB*0.30, b.y+ny*wB*0.30); ctx.stroke(); }
+  };
+  // 手掌助手：以腕点为基、朝向由 elbow→wrist 决定；skin 肤色，open 张开度(0握拢→1摊开)；绘掌+简化四指+拇指+掌背暗面
+  const hand=(wrist,elbow,skin,open)=>{
+    const ang=Math.atan2(wrist.y-elbow.y, wrist.x-elbow.x), op=clamp(open==null?0.4:open,0,1);
+    ctx.save(); ctx.translate(wrist.x,wrist.y); ctx.rotate(ang);
+    ctx.fillStyle=skin; ctx.beginPath(); ctx.ellipse(3.2,0,6.4,5,0,0,6.283); ctx.fill();   // 掌
+    ctx.strokeStyle=skin; ctx.lineCap='round'; const spread=0.36*op;
+    for(let f=0;f<4;f++){ const a2=(f-1.5)*spread, fl=(8.8-Math.abs(f-1.5)*1.2)*(0.72+0.28*op); ctx.lineWidth=2.5-f*0.24; ctx.beginPath(); ctx.moveTo(7.5,0); ctx.lineTo(7.5+Math.cos(a2)*fl, Math.sin(a2)*fl); ctx.stroke(); } // 四指
+    ctx.lineWidth=2.9; ctx.beginPath(); ctx.moveTo(2.4,3.2); ctx.lineTo(2.4+Math.cos(1.15)*6.6, 3.2+Math.sin(1.15)*6.6); ctx.stroke(); // 拇指
+    ctx.fillStyle='rgba(70,44,32,0.30)'; ctx.beginPath(); ctx.ellipse(3.4,2.2,4.8,2.5,0,0,6.283); ctx.fill();   // 掌背暗面
+    ctx.restore();
+  };
   ctx.save();
   ctx.translate(px, footY);
   ctx.scale(m.facing*m.turnScale, 1);
+  ctx.rotate((m.pose.lean||0)*0.05 + (m.pose.tilt||0)*0.05);   // 重心偏移/沉思时上身微斜（lean/tilt 驱动）
   ctx.translate(0, -maxFootY + breath);
   // 落地投影
   ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, maxFootY-breath+4, 60, 12, 0, 0, 6.283); ctx.fill();
   // —— 后腿（偏暗）——
-  seg(P.hipL, P.kneeB, 20, '#0a0a0f'); seg(P.kneeB, P.footB, 16, '#050508');
+  limb(P.hipL, P.kneeB, 21, 16, '#0a0a0f', null); limb(P.kneeB, P.footB, 16, 12, '#050508', null);
   ctx.fillStyle='#020203'; ctx.beginPath(); ctx.ellipse(P.footB.x+6, P.footB.y-3, 15, 7, 0, 0, 6.283); ctx.fill();
   // —— 后臂（偏暗，躯干之后）——
-  seg(P.shoulderB, P.elbowB, 13, '#0b0b12'); seg(P.elbowB, P.handB, 11, '#0e0e16');
-  ctx.fillStyle='#caa47e'; ctx.beginPath(); ctx.arc(P.handB.x,P.handB.y,6,0,6.283); ctx.fill();
+  limb(P.shoulderB, P.elbowB, 14, 11, '#0b0b12', null); limb(P.elbowB, P.handB, 11, 8.5, '#0e0e16', null);
+  hand(P.handB, P.elbowB, '#caa47e', 0.15);
   // ===== 躯干黑色军装外套（卷福版：方肩/收腰/展摆 · 高立领 · 肩章 · 排扣 · 斜绶带 · 顶光衣褶）=====
   const Hc=P.headC;                                   // 头心（后续脸/领/记录头顶均用）
   const goldHi = warm?'#f5dd90':'#a08cbc';            // 金属受光高光
   const goldDk = warm?'#7f6220':'#382a4e';            // 金属暗部
-  const hemY=66;
+  const hemY=66, sway=(m.pose.hemSway||0)*7;   // 下摆随动作左右摆动（hemSway 驱动）
   // 肩章绘制（金呢底 + 绲边高光 + 流苏 + 肩扣）
   const drawEp=(sx,sy,dir)=>{ ctx.save();
     ctx.fillStyle=goldDk; ctx.beginPath(); ctx.moveTo(sx-3*dir,sy-4.5); ctx.lineTo(sx+16*dir,sy-4); ctx.lineTo(sx+18*dir,sy+1); ctx.lineTo(sx+16*dir,sy+4); ctx.lineTo(sx-3*dir,sy+4.5); ctx.closePath(); ctx.fill();
@@ -5874,8 +6001,8 @@ function _monoHamlet(m, px){
   ctx.moveTo(P.shoulderB.x-7, P.shoulderB.y-1);
   ctx.lineTo(P.shoulderF.x+7, P.shoulderF.y-1);
   ctx.lineTo(P.hipR.x+14, 4);
-  ctx.lineTo(P.hipR.x+11, hemY);          // 外套下摆
-  ctx.lineTo(P.hipL.x-11, hemY);
+  ctx.lineTo(P.hipR.x+11+sway, hemY);          // 外套下摆（hemSway 摆动）
+  ctx.lineTo(P.hipL.x-11+sway, hemY);
   ctx.lineTo(P.hipL.x-14, 4);
   ctx.closePath(); ctx.fill();
   // 胸口受光软高光块
@@ -5917,14 +6044,22 @@ function _monoHamlet(m, px){
   ctx.fillStyle=warm?'rgba(255,236,185,0.14)':'rgba(210,220,255,0.12)';
   ctx.beginPath(); ctx.moveTo(P.shoulderB.x, P.shoulderB.y); ctx.lineTo(P.shoulderF.x, P.shoulderF.y); ctx.lineTo(5,-8); ctx.lineTo(-8,-8); ctx.closePath(); ctx.fill();
   // —— 前腿（军裤：深色 + 侧缝高光 + 皮靴反光）——
-  seg(P.hipR, P.kneeF, 22, '#15151c'); seg(P.kneeF, P.footF, 18, '#0b0b12');
+  limb(P.hipR, P.kneeF, 23, 17, '#15151c', warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)'); limb(P.kneeF, P.footF, 17, 13, '#0b0b12', null);
   ctx.strokeStyle=warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)'; ctx.lineWidth=1.4; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(P.hipR.x+3,2); ctx.lineTo(P.kneeF.x+2,P.kneeF.y); ctx.lineTo(P.footF.x+2,P.footF.y-6); ctx.stroke();
   ctx.fillStyle='#050506'; ctx.beginPath(); ctx.ellipse(P.footF.x+7, P.footF.y-3, 18, 8, 0, 0, 6.283); ctx.fill();
   ctx.fillStyle='rgba(120,120,140,0.25)'; ctx.beginPath(); ctx.ellipse(P.footF.x+3, P.footF.y-5, 7, 2.4, 0, 0, 6.283); ctx.fill();
-  // —— 颈 + 高立领（立领分明 + 金边勾勒 + 颈部投影）——
-  ctx.fillStyle='#a67c5e'; ctx.beginPath(); ctx.moveTo(P.neck.x-5,P.neck.y+2); ctx.lineTo(Hc.x-4,Hc.y+11); ctx.lineTo(Hc.x+4,Hc.y+11); ctx.lineTo(P.neck.x+5,P.neck.y+2); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='rgba(40,22,16,0.5)'; ctx.beginPath(); ctx.ellipse(Hc.x,Hc.y+9,4,2.4,0,0,6.283); ctx.fill();
+  // —— 颈：梯形（上窄下宽）自然衔接头→肩，含胸锁乳突肌暗示、下颌投影、喉结 + 高立领（金边勾勒）——
+  const nTopL=Hc.x-4.5, nTopR=Hc.x+4.5, nBotL=P.neck.x-7, nBotR=P.neck.x+7, nTopY=Hc.y+10, nBotY=P.neck.y+2, nMidY=(nTopY+nBotY)/2;
+  const neckG=ctx.createLinearGradient(0,nTopY,0,nBotY);
+  neckG.addColorStop(0,'#c89a72'); neckG.addColorStop(1,'#8a6144');
+  ctx.fillStyle=neckG; ctx.beginPath(); ctx.moveTo(nTopL,nTopY); ctx.lineTo(nBotL,nBotY); ctx.lineTo(nBotR,nBotY); ctx.lineTo(nTopR,nTopY); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(40,22,16,0.5)'; ctx.beginPath(); ctx.ellipse(Hc.x,nTopY-0.5,5,2.6,0,0,6.283); ctx.fill();   // 下颌投影暗带
+  ctx.strokeStyle='rgba(70,42,30,0.34)'; ctx.lineWidth=1.4; ctx.lineCap='round';                                  // 胸锁乳突肌暗示（两条斜向暗线）
+  ctx.beginPath(); ctx.moveTo(nTopL+1.5,nTopY+1); ctx.lineTo(nBotL+3,nBotY-1); ctx.moveTo(nTopR-1.5,nTopY+1); ctx.lineTo(nBotR-3,nBotY-1); ctx.stroke();
+  ctx.strokeStyle='rgba(255,236,205,0.22)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(nTopL+0.6,nTopY+1.5); ctx.lineTo(nBotL+2,nBotY-2); ctx.stroke();  // 颈侧受光高光
+  ctx.fillStyle='rgba(150,104,72,0.55)'; ctx.beginPath(); ctx.ellipse(Hc.x+0.5,nMidY,1.8,2.4,0,0,6.283); ctx.fill();       // 喉结微凸
+  ctx.fillStyle='rgba(255,232,198,0.18)'; ctx.beginPath(); ctx.ellipse(Hc.x-0.4,nMidY-0.6,0.9,1.2,0,0,6.283); ctx.fill();  // 喉结受光高光
   ctx.fillStyle='#0c0c14'; ctx.beginPath();
   ctx.moveTo(P.neck.x-14,P.neck.y+7); ctx.lineTo(Hc.x-8,Hc.y+13); ctx.lineTo(Hc.x+8,Hc.y+13); ctx.lineTo(P.neck.x+14,P.neck.y+7);
   ctx.lineTo(P.neck.x+10,P.neck.y-7); ctx.lineTo(P.neck.x-10,P.neck.y-7); ctx.closePath(); ctx.fill();
@@ -6009,13 +6144,10 @@ function _monoHamlet(m, px){
   ctx.beginPath(); ctx.ellipse(-2,-22,6,2.4,-0.25,0,6.283); ctx.fill();
   ctx.restore();                                     // 头部局部坐标复位
   // —— 前臂（独白手势臂，最前层：军装袖 + 金袖口 + 修长手掌）——
-  seg(P.shoulderF, P.elbowF, 15, '#1e1e27'); seg(P.elbowF, P.handF, 12.5, '#22222d');
-  ctx.strokeStyle=warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)'; ctx.lineWidth=1.4; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(P.shoulderF.x,P.shoulderF.y+2); ctx.lineTo(P.elbowF.x,P.elbowF.y); ctx.stroke();
+  limb(P.shoulderF, P.elbowF, 16, 12.5, '#1e1e27', warm?'rgba(255,228,175,0.12)':'rgba(200,210,255,0.10)'); limb(P.elbowF, P.handF, 12.5, 8.5, '#22222d', warm?'rgba(255,228,175,0.10)':'rgba(200,210,255,0.09)');
   ctx.save(); ctx.translate(P.handF.x,P.handF.y); ctx.rotate(Math.atan2(P.handF.y-P.elbowF.y,P.handF.x-P.elbowF.x));
-  ctx.fillStyle=goldDk; ctx.fillRect(-7,-6,4,12); ctx.fillStyle=gold; ctx.fillRect(-7,-6,1.6,12); ctx.restore();
-  ctx.fillStyle='#d8b083'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y,6.5,9,0,0,6.283); ctx.fill();
-  ctx.fillStyle='rgba(70,44,32,0.3)'; ctx.beginPath(); ctx.ellipse(P.handF.x,P.handF.y+3,5,3,0,0,6.283); ctx.fill();
+  ctx.fillStyle=goldDk; ctx.fillRect(-7,-6,4,12); ctx.fillStyle=gold; ctx.fillRect(-7,-6,1.6,12); ctx.restore();   // 金袖口
+  hand(P.handF, P.elbowF, '#d8b083', m.pose.handOpen);   // 修长手掌（张开度随位姿）
   ctx.restore();
   // 记录头顶屏幕坐标供对白框定位
   m.headX=px; m.headTopY=footY-maxFootY+breath+(Hc.y-24);
