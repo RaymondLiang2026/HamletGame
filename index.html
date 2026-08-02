@@ -56,17 +56,20 @@
   .scoreTable .row.total{border-bottom:none;color:var(--gold);font-size:22px;font-weight:bold;margin-top:6px}
 
   /* 剧情过场 */
-  #storyScreen{background:rgba(3,2,6,.9)}
-  .storyWrap{max-width:720px;width:92%;background:rgba(8,6,14,.62);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62)}
+  #storyScreen{background:rgba(3,2,6,.9);overflow:hidden}
+  #storyFx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+  .storyWrap{position:relative;z-index:2;max-width:640px;width:70%;background:rgba(8,6,14,.58);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62);backdrop-filter:blur(1px)}
   #storyAct{font-size:14px;letter-spacing:6px;color:var(--gold);opacity:.8;margin-bottom:10px}
-  #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:26px;text-shadow:2px 2px 0 #000}
+  #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:22px;text-shadow:2px 2px 0 #000}
   #storyBody{min-height:200px;text-align:left;font-size:clamp(14px,1.9vw,19px);line-height:2.05;color:#e6dfce}
+  #storyBody .zh,#storyBody .en{opacity:0;transform:translateY(8px);animation:storyLineIn .3s ease forwards}
   #storyBody .zh{margin:0 0 4px}
   #storyBody .en{font-style:italic;color:#8f96ab;font-size:.82em;margin:0 0 20px}
-  #storyBody .speak{color:#e8c25a}
-  #storyBody .cursor{display:inline-block;width:9px;background:var(--gold);animation:blink .5s steps(1) infinite;margin-left:2px}
-  @keyframes blink{50%{opacity:0}}
-  .storyFoot{margin-top:26px;display:flex;gap:14px;justify-content:center;align-items:center}
+  #storyBody .speak{color:#e8c25a;text-shadow:0 0 10px rgba(232,194,90,.22)}
+  @keyframes storyLineIn{to{opacity:1;transform:translateY(0)}}
+  .storyFoot{margin-top:24px;display:flex;gap:14px;justify-content:center;align-items:center}
+  #sceneFade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:30;transition:opacity .4s ease}
+  #sceneFade.show{opacity:1}
 
   #touch{position:absolute;inset:0;z-index:6;display:none;pointer-events:none}
   #touch .pad{position:absolute;bottom:14px;pointer-events:auto;width:66px;height:66px;border-radius:50%;background:rgba(232,194,90,.18);border:2px solid rgba(232,194,90,.5);display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;user-select:none;-webkit-user-select:none}
@@ -148,6 +151,7 @@
     </div>
 
     <div id="levelName"></div>
+    <div id="sceneFade"></div>
 
     <div id="bossGuide" class="hidden">
       <div class="guideQuote">“准备好了吗？命运正在注视着你。”</div>
@@ -161,6 +165,7 @@
 
     <!-- 剧情过场 -->
     <div id="storyScreen" class="overlay hidden">
+      <canvas id="storyFx" width="960" height="540"></canvas>
       <div class="storyWrap">
         <div id="storyAct"></div>
         <div id="storyTitle"></div>
