@@ -1325,6 +1325,7 @@ function drawBackground(){
    视差分层新增背景元素（远景 0.2 / 中景 0.5）——确定性静态，index 伪随机
    ============================================================ */
 function drawFarLayerFx(){
+  drawFarFxPlus();   // 【新增】远景加倍层（先绘制，置于原远景之后=更远）
   if(actIndex===ACT_ESCAPE){
     // 第三幕远景：荒野山脊剪影
     const off=parallaxOff(0.2,W); ctx.save(); ctx.fillStyle=darkMode?'#120c1a':'#171020';
@@ -1370,6 +1371,7 @@ function drawMidLayerFx(){
     for(let bx=-off-300; bx<W+300; bx+=300) drawBrokenWall(bx, H*0.56);
     ctx.restore();
   }
+  drawMidFxPlus();   // 【新增】中景加倍层
 }
 
 function drawSceneDecorations(){
@@ -1395,6 +1397,7 @@ function drawSceneDecorations(){
       ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.6); ctx.lineTo(rx+s*1.8,ry); ctx.lineTo(rx+s*0.9,ry+s*0.5); ctx.closePath(); ctx.fill(); }
     ctx.restore();
   }
+  drawSceneDecoPlus();   // 【新增】近景装饰加倍层
 }
 function drawWallTorch(x,y,t){
   ctx.save(); ctx.fillStyle='#2a1c18'; ctx.fillRect(x-3,y-8,6,28); ctx.fillStyle='#6a4a2a'; ctx.fillRect(x-9,y+4,18,5);
@@ -1689,6 +1692,7 @@ function drawActAmbientFx(){
   else if(actIndex===ACT_COURT){ drawWindowLight(); drawPoloniusPeek(); }
   else if(actIndex===ACT_ESCAPE){ drawEscapeCrow(); }
   else if(actIndex===ACT_ENGLAND){ drawSeagulls(); drawEnglandSplash(); drawThinRain(); }
+  drawActAmbientPlus();   // 【新增】动态特效加倍层（鬼魂残影/额外守卫/乌鸦群）
 }
 // 第一幕：地面浓雾滚动（固定 14 团，帧驱动位置，无每帧 new）
 function drawGroundFog(){
@@ -1813,6 +1817,214 @@ function drawThinRain(){
   for(let i=0;i<50;i++){ const seed=i*53; const x=((seed*17)%W + frame*3)%W; const y=((seed*29)%H + frame*7)%H;
     ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-3,y+12); ctx.stroke(); }
   ctx.restore();
+}
+
+/* =========================================================================
+   【新增·叠加层】一二三幕视觉加倍 + 地图结构装饰（全部为叠加，不改动原绘制）
+   - draw*Plus：屏幕空间/视差绘制，挂在原有分层函数末尾，不参与碰撞与主线逻辑
+   - drawStructureDecor：世界空间，绘制新增地图结构（城垛多层/登塔/迷宫）的装饰
+   ========================================================================= */
+// —— 远景加倍：第一幕第二圈外城墙；第三幕远景三层山脊 ——
+function drawFarFxPlus(){
+  if(actIndex===ACT_CASTLE){
+    const off=parallaxOff(0.14,300); ctx.save(); ctx.fillStyle=darkMode?'#0b0712':'#141a30';
+    for(let bx=-off-300; bx<W+300; bx+=300){ const top=H*0.26;
+      ctx.fillRect(bx, top, 300, H*0.10);
+      for(let m=0;m<12;m++){ if(m%2===0) ctx.fillRect(bx+m*25, top-9, 15, 9); } // 外墙齿垛
+      ctx.fillRect(bx+128, top-44, 40, 44);                                     // 远塔
+      for(let m=0;m<4;m++){ if(m%2===0) ctx.fillRect(bx+128+m*10, top-52, 7, 8); }
+    }
+    ctx.restore();
+  } else if(actIndex===ACT_ESCAPE){
+    const layers=[
+      {f:0.09, base:0.42, amp:50, col:darkMode?'#0d0914':'#130d1b'},
+      {f:0.14, base:0.48, amp:64, col:darkMode?'#110b18':'#17101f'}
+    ];
+    ctx.save();
+    for(const L of layers){ const off=parallaxOff(L.f,W); ctx.fillStyle=L.col;
+      for(let seg=-1;seg<=1;seg++){ const bx=-off+seg*W; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(bx,H*L.base);
+        for(let x=0;x<=W;x+=34){ const n=hnoise(((x/34)|0)+L.base*10); ctx.lineTo(bx+x, H*L.base - n*L.amp - Math.sin(x*0.008+L.f*20)*14); }
+        ctx.lineTo(bx+W,H); ctx.closePath(); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+}
+// —— 中景加倍：第一幕加旗帜/城垛；第二幕加柱廊；第三幕加电线杆+枯树中层 ——
+function drawMidFxPlus(){
+  const off=parallaxOff(0.5,320); ctx.save();
+  if(actIndex===ACT_CASTLE){
+    // 额外城堡旗帜（原有基础上增至 4-5 面，不同颜色/高度）
+    const flags=[{dx:60,c:'#7a2230',h:40},{dx:150,c:'#2a4a7a',h:52},{dx:210,c:'#6a5a20',h:34},{dx:270,c:'#5a2a5a',h:46}];
+    for(let bx=-off-320; bx<W+320; bx+=320){ for(const f of flags){ drawMidBanner(bx+f.dx, H*0.30, f.c, f.h); } }
+  } else if(actIndex===ACT_COURT){
+    // 额外宫廷柱廊（原有 2→共 4-5 根），不同花纹
+    for(let bx=-off-320; bx<W+320; bx+=320){ [40,120,240,300].forEach((dx,i)=> drawMidPillar(bx+dx, H*0.24, H*0.34, i)); }
+  } else if(actIndex===ACT_ESCAPE){
+    // 额外电线杆（原 1-2→共 4-5）+ 中层枯树
+    for(let bx=-off-320; bx<W+320; bx+=320){ [30,150,270].forEach(dx=> drawMidPole(bx+dx, H*0.58)); drawMidDeadTree(bx+90, H*0.62, 0.7); drawMidDeadTree(bx+220, H*0.60, 0.85); }
+  }
+  ctx.restore();
+}
+function drawMidBanner(x,y,c,h){
+  const w=Math.sin(frame*0.05+x)*3;
+  ctx.fillStyle='#2a2a30'; ctx.fillRect(x-1,y-8,3,10);
+  ctx.fillStyle=c; ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y);
+  ctx.lineTo(x+7+w,y+h); ctx.lineTo(x,y+h-6); ctx.lineTo(x-7+w,y+h); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fillRect(x-1,y,2,h-4);
+}
+function drawMidPillar(x,yTop,h,i){
+  ctx.fillStyle=darkMode?'#1c1626':'#3a3052'; ctx.fillRect(x-8,yTop,16,h);
+  ctx.fillStyle=darkMode?'#2a2038':'#4a4068'; ctx.fillRect(x-11,yTop-6,22,7); ctx.fillRect(x-11,yTop+h-2,22,7);
+  ctx.strokeStyle='rgba(216,184,240,0.18)'; ctx.lineWidth=1;
+  for(let s=1;s<5;s++){ const fx=x-5+ (i%2? Math.sin(s)*1.5:0); ctx.beginPath(); ctx.moveTo(fx,yTop+4); ctx.lineTo(fx,yTop+h-4); ctx.stroke(); }
+}
+function drawMidPole(x,yBase){
+  ctx.strokeStyle=darkMode?'#141018':'#1a141f'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(x,yBase); ctx.lineTo(x,yBase-70); ctx.stroke();
+  ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x-12,yBase-60); ctx.lineTo(x+12,yBase-60); ctx.stroke();
+  ctx.strokeStyle='rgba(20,16,24,0.5)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x+12,yBase-58); ctx.quadraticCurveTo(x+60,yBase-46,x+108,yBase-58); ctx.stroke();
+}
+function drawMidDeadTree(x,yBase,s){
+  ctx.save(); ctx.translate(x,yBase); ctx.scale(s,s); ctx.strokeStyle=darkMode?'rgba(18,14,22,0.75)':'rgba(24,18,28,0.7)'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-56);
+  ctx.moveTo(0,-34); ctx.lineTo(-18,-52); ctx.moveTo(0,-40); ctx.lineTo(16,-58); ctx.moveTo(0,-48); ctx.lineTo(-10,-66); ctx.stroke();
+  ctx.restore();
+}
+// —— 近景装饰加倍：第一幕砖缝/水坑/破石柱/火把；第二幕地毯/烛台/吊灯；第三幕落叶/花瓣 ——
+function drawSceneDecoPlus(){
+  const nOff=parallaxOff(0.8,W);
+  if(actIndex===ACT_CASTLE){
+    // 前景城垛砖缝纹理带（灰/深灰交替+缝隙暗线）
+    ctx.save(); const by=H-46;
+    for(let x=-((camX*0.9)%64); x<W; x+=64){ for(let r=0;r<2;r++){ const yy=by+r*22;
+      ctx.fillStyle=(Math.floor(x/64)+r)%2? '#33313c':'#3c3a46'; ctx.fillRect(x,yy,64,22);
+      ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,yy+0.5,64,22); } }
+    ctx.restore();
+    // 地面镜面水坑（动态波纹）
+    [ [W*0.28,'#2a3550'], [W*0.62,'#243048'] ].forEach((p,i)=>{ const px=(p[0]-(camX*0.9)%W+W)%W; drawPuddle(px, H*0.9, 70, p[1], i); });
+    // 破碎石柱（不同高度，作遮蔽）
+    [ [W*0.2,60],[W*0.45,90],[W*0.75,48] ].forEach(c=>{ const px=(c[0]-(camX*0.85)%W+W)%W; drawBrokenColumn(px, H*0.86, c[1]); });
+    // 火把（燃烧/熄灭交替，2-4 根）
+    [ [W*0.15,true],[W*0.4,false],[W*0.68,true],[W*0.9,false] ].forEach(t=>{ const px=(t[0]-(camX*0.85)%W+W)%W; drawSceneTorch(px, H*0.72, t[1]); });
+  } else if(actIndex===ACT_COURT){
+    // 几何纹路地毯（深红+金）
+    ctx.save(); const cy=H-30; for(let x=-((camX*0.9)%80); x<W; x+=80){ ctx.fillStyle=(Math.floor(x/80)%2)?'#5a1e28':'#6a2430'; ctx.fillRect(x,cy,80,30);
+      ctx.strokeStyle='rgba(232,194,90,0.5)'; ctx.lineWidth=2; ctx.strokeRect(x+6,cy+5,68,20);
+      ctx.beginPath(); ctx.moveTo(x+40,cy+5); ctx.lineTo(x+52,cy+15); ctx.lineTo(x+40,cy+25); ctx.lineTo(x+28,cy+15); ctx.closePath(); ctx.stroke(); }
+    ctx.restore();
+    // 额外烛台（原有基础上增至 8-10 个），亮度各异
+    for(let i=0;i<6;i++){ const px=((i*160+40)-(camX*0.85)%W+W)%W; drawSceneCandle(px, H*0.66, i); }
+    // 中央吊灯（悬挂+光晕）
+    drawChandelier(W*0.5, H*0.16);
+  } else if(actIndex===ACT_ESCAPE){
+    // 地面落叶（棕/黄小矩形旋转）
+    ctx.save(); for(let i=0;i<26;i++){ const seed=i*41; const x=((seed*19)%W - (camX*0.9)%W + W)%W; const y=H-40+ (seed%18); const rot=frame*0.02+seed;
+      ctx.save(); ctx.translate(x,y+Math.sin(frame*0.03+seed)*2); ctx.rotate(rot); ctx.fillStyle=(seed%2)?'#8a5a2a':'#a8862e'; ctx.fillRect(-3,-2,6,4); ctx.restore(); }
+    ctx.restore();
+    // 三色奥菲莉亚花瓣飘落
+    for(let i=0;i<18;i++){ const seed=i*57; const cols=['#ffd0e6','#ffffff','#e0c8ff']; const x=((seed*23)%W + frame*0.6)%W; const y=((seed*31)%H + frame*1.4)%H;
+      ctx.save(); ctx.globalAlpha=0.7; ctx.fillStyle=cols[seed%3]; ctx.translate(x,y); ctx.rotate(frame*0.02+seed); ctx.beginPath(); ctx.ellipse(0,0,4,2.2,0,0,6.283); ctx.fill(); ctx.restore(); }
+  }
+}
+function drawPuddle(x,y,w,col,seed){
+  ctx.save(); const g=ctx.createLinearGradient(x,y-6,x,y+8); g.addColorStop(0,'rgba(150,180,220,0.35)'); g.addColorStop(1,col);
+  ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(x,y,w,9,0,0,6.283); ctx.fill();
+  ctx.strokeStyle='rgba(190,210,235,0.35)'; ctx.lineWidth=1;
+  for(let r=0;r<3;r++){ const rr=((frame*0.6+seed*30+r*20)% (w)); ctx.globalAlpha=1-rr/w; ctx.beginPath(); ctx.ellipse(x,y,rr,rr*0.13,0,0,6.283); ctx.stroke(); }
+  ctx.restore(); ctx.globalAlpha=1;
+}
+function drawBrokenColumn(x,yBase,h){
+  ctx.save(); ctx.fillStyle=darkMode?'#241c2e':'#4a4658'; ctx.fillRect(x-11,yBase-h,22,h);
+  ctx.fillStyle=darkMode?'#180f1f':'#3a3648'; ctx.beginPath(); ctx.moveTo(x-11,yBase-h); ctx.lineTo(x+11,yBase-h); ctx.lineTo(x+6,yBase-h-9); ctx.lineTo(x-6,yBase-h-4); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; for(let s=1;s<4;s++){ ctx.beginPath(); ctx.moveTo(x-6,yBase-h*s/4); ctx.lineTo(x+6,yBase-h*s/4); ctx.stroke(); }
+  ctx.fillStyle=darkMode?'#4a4658':'#5a5668'; ctx.fillRect(x-14,yBase-6,28,6);
+  ctx.restore();
+}
+function drawSceneTorch(x,y,lit){
+  ctx.save(); ctx.strokeStyle='#3a2a1a'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y+26); ctx.stroke();
+  ctx.fillStyle='#2a1a10'; ctx.beginPath(); ctx.arc(x,y,4,0,6.283); ctx.fill();
+  if(lit){ const fl=Math.sin(frame*0.3+x)*2; const g=ctx.createRadialGradient(x,y-6,1,x,y-6,18+fl); g.addColorStop(0,'rgba(255,220,120,0.9)'); g.addColorStop(0.5,'rgba(255,150,40,0.5)'); g.addColorStop(1,'rgba(255,120,20,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y-6,18+fl,0,6.283); ctx.fill();
+    ctx.fillStyle='#ffd45a'; ctx.beginPath(); ctx.moveTo(x,y-16-fl); ctx.quadraticCurveTo(x+5,y-6,x,y-2); ctx.quadraticCurveTo(x-5,y-6,x,y-16-fl); ctx.fill();
+  } else { ctx.fillStyle='#3a2f26'; ctx.beginPath(); ctx.arc(x,y-6,4,0,6.283); ctx.fill();
+    ctx.strokeStyle='rgba(120,120,130,0.35)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x,y-10); ctx.lineTo(x-2,y-18); ctx.moveTo(x,y-10); ctx.lineTo(x+2,y-20); ctx.stroke(); }
+  ctx.restore();
+}
+function drawSceneCandle(x,y,i){
+  ctx.save(); ctx.fillStyle='#8a7a5a'; ctx.fillRect(x-2,y,4,16); ctx.fillStyle='#c7b58e'; ctx.fillRect(x-5,y+16,10,3);
+  const b=0.6+0.4*Math.abs(Math.sin(frame*0.2+i)); const g=ctx.createRadialGradient(x,y-4,1,x,y-4,12); g.addColorStop(0,'rgba(255,230,150,'+b+')'); g.addColorStop(1,'rgba(255,180,60,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y-4,12,0,6.283); ctx.fill();
+  ctx.fillStyle='#ffe28a'; ctx.beginPath(); ctx.ellipse(x,y-4,2,4,0,0,6.283); ctx.fill(); ctx.restore();
+}
+function drawChandelier(x,y){
+  ctx.save(); ctx.strokeStyle='#8a7a3a'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,y); ctx.stroke();
+  ctx.fillStyle='#b89a3a'; ctx.beginPath(); ctx.ellipse(x,y,30,10,0,0,6.283); ctx.fill();
+  for(let a=0;a<6;a++){ const ax=x+Math.cos(a/6*6.283)*30, ay=y+Math.sin(a/6*6.283)*8; const b=0.55+0.35*Math.abs(Math.sin(frame*0.18+a));
+    const g=ctx.createRadialGradient(ax,ay-6,1,ax,ay-6,14); g.addColorStop(0,'rgba(255,225,140,'+b+')'); g.addColorStop(1,'rgba(255,180,60,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(ax,ay-6,14,0,6.283); ctx.fill();
+    ctx.fillStyle='#ffe08a'; ctx.beginPath(); ctx.ellipse(ax,ay-6,2,4,0,0,6.283); ctx.fill(); }
+  ctx.restore();
+}
+// —— 动态 FX 加倍：第一幕鬼魂三重残影+额外守卫；第三幕 V 形乌鸦+月穿云 ——
+function drawActAmbientPlus(){
+  if(actIndex===ACT_CASTLE){
+    drawGhostAfterimages();
+    drawExtraGuards();
+  } else if(actIndex===ACT_ESCAPE){
+    drawCrowFlock();
+  }
+}
+function drawGhostAfterimages(){
+  // 在原有鬼魂之外叠加 2 层时间差残影（共 3 层视觉）
+  ctx.save();
+  for(let k=1;k<=2;k++){ const ph=frame*0.02 - k*0.5; const gx=W*0.5 + Math.sin(ph)*160 - (camX*0.3)%W; const gy=H*0.4 + Math.cos(ph*0.7)*30;
+    ctx.globalAlpha=0.12/k; ctx.fillStyle='#bfe0ff';
+    ctx.beginPath(); ctx.ellipse(gx,gy,14,26,0,0,6.283); ctx.fill();
+    ctx.beginPath(); ctx.arc(gx,gy-24,9,0,6.283); ctx.fill();
+  }
+  ctx.restore(); ctx.globalAlpha=1;
+}
+function drawExtraGuards(){
+  // 额外一组高处巡逻守卫剪影（不同高度/路线）
+  ctx.save(); ctx.fillStyle='rgba(10,10,16,0.5)';
+  const routes=[{y:H*0.5,spd:0.4,sp:0},{y:H*0.62,spd:-0.3,sp:2.1},{y:H*0.44,spd:0.25,sp:4.2}];
+  for(const r of routes){ const gx=((frame*r.spd+r.sp*120)%W+W)%W; ctx.save(); ctx.translate(gx,r.y);
+    ctx.fillRect(-4,-22,8,22); ctx.beginPath(); ctx.arc(0,-26,5,0,6.283); ctx.fill(); ctx.fillRect(4,-18,10,2); ctx.restore(); }
+  ctx.restore();
+}
+function drawCrowFlock(){
+  // 3 只乌鸦 V 形飞过（周期性横穿）
+  ctx.save(); ctx.fillStyle=darkMode?'#0a0810':'#100c16';
+  const base=((frame*1.1)% (W+240))-120; const wing=Math.sin(frame*0.35)*5;
+  const set=[{dx:0,dy:0},{dx:-22,dy:-14},{dx:-22,dy:14}];
+  for(const c of set){ const cx=base+c.dx, cy=H*0.22+c.dy+Math.sin(frame*0.02+c.dx)*8;
+    ctx.beginPath(); ctx.moveTo(cx-8,cy); ctx.quadraticCurveTo(cx,cy-6-wing,cx,cy); ctx.quadraticCurveTo(cx+8,cy-6-wing,cx+8,cy); ctx.quadraticCurveTo(cx,cy+2,cx-8,cy); ctx.fill(); }
+  ctx.restore();
+}
+// —— 世界空间：新增地图结构（城垛多层/登塔/迷宫）的装饰绘制 ——
+function drawStructureDecor(){
+  if(!level || !level._decor) return;
+  for(const d of level._decor){
+    if(d.x < camX-120 || d.x > camX+W+120) continue;
+    switch(d.type){
+      case 'merlon': ctx.fillStyle='#4a4658'; for(let m=0;m<4;m++){ ctx.fillRect(d.x+m*22, d.y-10, 12, 10); } break;
+      case 'brokencol': drawBrokenColumn(d.x, d.y, d.h||40); break;
+      case 'torch': drawSceneTorch(d.x, d.y, d.lit!==false); break;
+      case 'painting': ctx.fillStyle='#3a2a1a'; ctx.fillRect(d.x-2,d.y-2,28,36); ctx.fillStyle='#7a5a3a'; ctx.fillRect(d.x,d.y,24,32); ctx.fillStyle='#caa25a'; ctx.fillRect(d.x+4,d.y+4,16,10); break;
+      case 'carpet': ctx.fillStyle='#5a1e28'; ctx.fillRect(d.x,d.y,d.w||90,6); ctx.strokeStyle='rgba(232,194,90,0.6)'; ctx.lineWidth=1; ctx.strokeRect(d.x+3,d.y+1,(d.w||90)-6,4); break;
+      case 'bookshelf': ctx.fillStyle='#3a2818'; ctx.fillRect(d.x,d.y-34,30,34); for(let r=0;r<3;r++){ for(let b=0;b<5;b++){ ctx.fillStyle=['#7a3a3a','#3a5a7a','#6a6a3a'][(r+b)%3]; ctx.fillRect(d.x+3+b*5,d.y-32+r*11,4,9); } } break;
+      case 'candlerow': for(let c=0;c<3;c++) drawSceneCandle(d.x+c*12, d.y, c); break;
+      case 'curtain': ctx.fillStyle=darkMode?'#2a1420':'#6a2440'; for(let f=0;f<4;f++){ const sw=Math.sin(frame*0.05+f)*2; ctx.beginPath(); ctx.moveTo(d.x+f*9,d.y); ctx.quadraticCurveTo(d.x+f*9+4+sw,d.y+22,d.x+f*9,d.y+44); ctx.lineTo(d.x+f*9+9,d.y+44); ctx.quadraticCurveTo(d.x+f*9+5+sw,d.y+22,d.x+f*9+9,d.y); ctx.closePath(); ctx.fill(); } break;
+      case 'weaponrack': ctx.strokeStyle='#5a4a2a'; ctx.lineWidth=2; ctx.strokeRect(d.x,d.y-30,26,30); ctx.strokeStyle='#aab'; for(let s=0;s<3;s++){ ctx.beginPath(); ctx.moveTo(d.x+5+s*8,d.y-2); ctx.lineTo(d.x+5+s*8,d.y-28); ctx.stroke(); } break;
+      case 'window': { const g=ctx.createLinearGradient(d.x,d.y-34,d.x,d.y); g.addColorStop(0,'rgba(120,150,210,0.55)'); g.addColorStop(1,'rgba(40,50,90,0.2)'); ctx.fillStyle=g; ctx.fillRect(d.x,d.y-34,30,34); ctx.strokeStyle='#2a2030'; ctx.lineWidth=2; ctx.strokeRect(d.x,d.y-34,30,34); ctx.beginPath(); ctx.moveTo(d.x+15,d.y-34); ctx.lineTo(d.x+15,d.y); ctx.moveTo(d.x,d.y-17); ctx.lineTo(d.x+30,d.y-17); ctx.stroke(); } break;
+      case 'forkmark': ctx.strokeStyle='#c8b070'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x,d.y-24); ctx.lineTo(d.x-10,d.y-30); ctx.moveTo(d.x,d.y-24); ctx.lineTo(d.x+10,d.y-30); ctx.stroke(); ctx.fillStyle='rgba(200,176,112,0.9)'; ctx.font='9px sans-serif'; ctx.fillText('岔路', d.x-9, d.y-34); break;
+      case 'vine': ctx.strokeStyle='rgba(80,130,70,0.7)'; ctx.lineWidth=2; for(let v=0;v<5;v++){ const vx=d.x+v*10; ctx.beginPath(); ctx.moveTo(vx,d.y-70); for(let s=0;s<7;s++){ ctx.lineTo(vx+Math.sin(frame*0.02+s+v)*4, d.y-70+s*11); } ctx.stroke(); ctx.fillStyle='rgba(90,150,80,0.6)'; ctx.beginPath(); ctx.ellipse(vx+3,d.y-30,3,5,0.6,0,6.283); ctx.fill(); } break;
+      case 'rubble': ctx.fillStyle=darkMode?'#241c2e':'#3a3040'; ctx.fillRect(d.x,d.y-40,20,40); for(let s=0;s<6;s++){ ctx.fillStyle=(s%2)?'#4a4050':'#2f2838'; ctx.fillRect(d.x-6+ (s%3)*9, d.y-6+ (s%2)*6, 8, 6); } ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.strokeRect(d.x+0.5,d.y-40.5,20,40); break;
+      case 'abyss': { const g=ctx.createLinearGradient(d.x,d.y,d.x,d.y+90); g.addColorStop(0,'rgba(0,0,0,0.0)'); g.addColorStop(1,'rgba(0,0,0,0.75)'); ctx.fillStyle=g; ctx.fillRect(d.x-40,d.y,120,90); ctx.strokeStyle='rgba(80,70,90,0.5)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(d.x-40,d.y+2); ctx.lineTo(d.x+80,d.y+2); ctx.stroke(); } break;
+      case 'opheliahint': { const vis=Math.sin(frame*0.012+d.ph); if(vis>0.5){ ctx.save(); ctx.globalAlpha=(vis-0.5)*2*0.55; ctx.fillStyle='#e8d0f0'; ctx.beginPath(); ctx.ellipse(d.x,d.y,8,20,0,0,6.283); ctx.fill(); ctx.beginPath(); ctx.arc(d.x,d.y-22,6,0,6.283); ctx.fill(); ctx.fillStyle='rgba(255,150,190,0.5)'; ctx.fillRect(d.x-8,d.y-4,16,18); ctx.restore(); ctx.globalAlpha=1; } } break;
+    }
+  }
 }
 
 // 具体背景剪影绘制器（供 theme.drawFar / drawMid 使用）
@@ -3207,6 +3419,7 @@ function buildAct(idx){
     lv.segments=[{x:0,name:'城墙入口'},{x:lv.width/3,name:'守卫哨塔'},{x:lv.width*2/3,name:'鬼魂之墙'}];
     fixCastlePreCheckpointSpikeTrap(lv);
     appendBossArena(lv,'ghostking',{completesLevel:true});
+    addCastleMultiTier(lv);   // 【新增】多层城垛台阶结构
   } else if(idx===ACT_COURT){ // 第二幕 宫廷 —— 前段拾取亡魂之弓；关底 Boss：小丑波洛涅斯
     lv=buildStandard({seed:202, width:5600, enemies:['patrol','archer','shield'], enemyChance:0.55, pitBase:0.12, pitHazard:'spike'});
     // 亡魂之弓：本幕前段拾取（关卡开始不久即出现）
@@ -3215,6 +3428,7 @@ function buildAct(idx){
     lv.courtOphelia={ baseX:lv.width*0.30, x:lv.width*0.30, phase:0, dir:1 };
     lv.segments=[{x:0,name:'宫廷回廊'},{x:lv.width/3,name:'追逐奥菲莉亚'},{x:lv.width*2/3,name:'小丑的舞台'}];
     appendBossArena(lv,'clown',{completesLevel:true});
+    addCourtTower(lv);   // 【新增】塔楼内部垂直攀登结构
   } else if(idx===ACT_ESCAPE){ // 第三幕 逃亡 —— 疯朋克奥菲莉亚背景游荡；关底双人小 Boss 罗森格兰兹/吉尔登斯顿；后段彩蛋入口
     lv=buildStandard({seed:303, width:6200, enemies:['patrol','archer','shield','skeleton'], enemyChance:0.6, pitBase:0.16, pitHazard:'poison', elite:true});
     lv.punkOphelia={ baseX:lv.width*0.22, x:lv.width*0.22, phase:0, lineT:90, lineI:0, dir:1 };
@@ -3226,6 +3440,7 @@ function buildAct(idx){
       { kind:'rosencrantz',  triggerX:raX+40, started:false, defeated:false, pairFirst:true },
       { kind:'guildenstern', triggerX:raX,    started:false, defeated:false, completesLevel:true }
     ];
+    addEscapeMaze(lv);   // 【新增】迷宫式多路径结构
   } else if(idx===ACT_LAKE){ // 彩蛋关 湖边（限时救援疯朋克奥菲莉亚）
     lv=buildStandard({seed:404, width:5200, enemies:['patrol','archer','skeleton'], enemyChance:0.5, pitBase:0.28, maxPit:120, pitHazard:'void'});
     lv.water=true;
@@ -4211,6 +4426,103 @@ function addCastleFloors(lv, cx, occupied){
   branchClearRegion(lv, cx-90, cx+210);
   (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx, r:130});
   occupied.push(cx);
+}
+/* =========================================================================
+   【新增·叠加】一二三幕地图结构复杂化（全部为单向平台/梯子/装饰，主线地面不改动）
+   - 单向平台(type:'plat')仅从上方落定、不阻挡水平移动，因此绝不影响主线跑动/碰撞
+   - 装饰写入 lv._decor（世界层，由 drawStructureDecor 绘制），不参与碰撞
+   ========================================================================= */
+// 第一幕：多层城垛台阶（3-4 段高度递增，逐级梯子攀爬 + 中段守卫 + 顶部俯瞰藏宝）
+function addCastleMultiTier(lv){
+  const bx=2600; lv._decor=lv._decor||[];
+  const tiers=[
+    {x:bx,     y:GROUND_TOP-80,  w:150},
+    {x:bx+120, y:GROUND_TOP-155, w:140},
+    {x:bx+240, y:GROUND_TOP-230, w:130},
+    {x:bx+360, y:GROUND_TOP-305, w:120}
+  ];
+  // 先清理该区域地面陷阱/散兵，随后再放置本结构的守卫（避免被清掉）
+  branchClearRegion(lv, bx-100, bx+520);
+  // 地面 → 第一级 起跳踏台
+  lv.platforms.push({x:bx-70, y:GROUND_TOP-40, w:70, h:14, type:'plat', color:'#43414f', branch:true});
+  tiers.forEach((t,i)=>{
+    lv.platforms.push({x:t.x, y:t.y, w:t.w, h:14, type:'plat', color:'#4a4658', branch:true, parapetTier:i+1});
+    lv._decor.push({type:'merlon', x:t.x+t.w-56, y:t.y});       // 城垛齿垛
+    if(i%2===0) lv._decor.push({type:'torch', x:t.x+16, y:t.y-30, lit:true});
+    else        lv._decor.push({type:'torch', x:t.x+16, y:t.y-30, lit:false});
+    // 逐级梯子：从本级攀爬到上一更高级
+    if(i<tiers.length-1){ const nt=tiers[i+1];
+      lv.triggers.push({x:nt.x-16, y:nt.y, w:26, h:t.y-nt.y+14, type:'ladder', persist:true, key:'castleTier_'+i}); }
+  });
+  lv._decor.push({type:'brokencol', x:tiers[0].x+120, y:tiers[0].y, h:40});
+  lv._decor.push({type:'brokencol', x:tiers[1].x+118, y:tiers[1].y, h:34});
+  // 中段守卫 2-3（不同高度）
+  lv.enemySpawns.push({type:'patrol', x:tiers[0].x+80, y:tiers[0].y});
+  lv.enemySpawns.push({type:'archer', x:tiers[1].x+80, y:tiers[1].y});
+  lv.enemySpawns.push({type:'shield', x:tiers[2].x+70, y:tiers[2].y});
+  // 破石柱遮蔽（破坏物）
+  lv.breakables.push({x:tiers[1].x+96, y:tiers[1].y-26, w:22, h:26, kind:'box', hp:2, hitT:0, dead:false, drop:'ammo'});
+  // 顶层：俯瞰视野提示 + 藏宝
+  const top=tiers[tiers.length-1];
+  lv.triggers.push({x:top.x+10, y:top.y-46, w:100, h:44, type:'peak', fired:false, key:'castleTierPeak'});
+  lv.chests.push({x:top.x+80, y:top.y-24, w:28, h:22, open:false, taken:false, reward:'score', branch:true, viaLadder:true, label:'城垛之巅 · 俯瞰全城的珍藏！'});
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:bx+200, r:300});
+}
+// 第二幕：塔楼内部垂直攀登（5 层螺旋、逐层变窄、可见楼梯踏台、每层不同宫廷装饰）
+function addCourtTower(lv){
+  const cx=2000, floors=5; lv._decor=lv._decor||[];
+  branchClearRegion(lv, cx-120, cx+300);
+  // 登塔起步踏台
+  lv.platforms.push({x:cx-70, y:GROUND_TOP-38, w:70, h:14, type:'plat', color:'#a89468', branch:true});
+  for(let i=0;i<floors;i++){
+    const Yi=GROUND_TOP-70-i*68, w=170-i*22, fx=cx-10 + (i%2?30:-10);
+    lv.platforms.push({x:fx, y:Yi, w:w, h:14, type:'plat', color:'#b8a478', branch:true, towerFloor:i+1});
+    // 可见楼梯踏台（连接下一层）
+    if(i>=1) lv.platforms.push({x:cx+ (i%2?46:6), y:Yi+34, w:48, h:12, type:'plat', color:'#9c8a64', branch:true, towerStair:true});
+    // 每层不同宫廷装饰
+    if(i===0){ lv._decor.push({type:'weaponrack', x:fx+w-30, y:Yi}); lv.enemySpawns.push({type:'patrol', x:fx+w/2, y:Yi}); }
+    else if(i===1){ lv._decor.push({type:'painting', x:fx+8, y:Yi-34}); lv._decor.push({type:'carpet', x:fx+12, y:Yi-6, w:w-24}); lv.breakables.push({x:fx+w-26, y:Yi-26, w:22, h:26, kind:'box', hp:2, hitT:0, dead:false, drop:'coin'}); }
+    else if(i===2){ lv._decor.push({type:'bookshelf', x:fx+6, y:Yi}); lv._decor.push({type:'candlerow', x:fx+w-42, y:Yi-2}); lv.enemySpawns.push({type:'archer', x:fx+w/2, y:Yi}); }
+    else if(i===3){ lv._decor.push({type:'window', x:fx+8, y:Yi}); lv._decor.push({type:'curtain', x:fx+w-34, y:Yi-44}); lv.chests.push({x:fx+14, y:Yi-24, w:28, h:22, open:false, taken:false, reward:'ammo', branch:true, label:'塔楼窗畔 · 补给！'}); }
+  }
+  // 顶层：波洛涅斯偷窥处（帷幕 + 俯瞰 + 珍藏）
+  const topY=GROUND_TOP-70-(floors-1)*68;
+  lv._decor.push({type:'curtain', x:cx-6, y:topY-44});
+  lv.triggers.push({x:cx-6, y:topY-46, w:96, h:44, type:'peak', fired:false, key:'courtTowerPeak'});
+  lv.chests.push({x:cx+40, y:topY-24, w:28, h:22, open:false, taken:false, reward:'score', branch:true, label:'塔顶 · 波洛涅斯的窥视处'});
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:cx+80, r:300});
+}
+// 第三幕：迷宫式多路径（上/中/下三线 + 岔路标记 + 死路藏宝 + 藤蔓隐路 + 汇合下坡）
+function addEscapeMaze(lv){
+  const x0=1900, gy=GROUND_TOP, midY=gy-110, upperY=gy-200; lv._decor=lv._decor||[];
+  branchClearRegion(lv, x0-60, x0+1060);   // 保持三线区域地面陷阱清空，主线更顺
+  // 岔路口入口踏台 + 标记
+  lv.platforms.push({x:x0-70, y:gy-56, w:64, h:14, type:'plat', color:'#4a3020', branch:true});
+  lv._decor.push({type:'forkmark', x:x0-38, y:gy-56});
+  // 中线平台链
+  const midXs=[x0+40, x0+230, x0+430, x0+640, x0+850];
+  midXs.forEach((mx,i)=> lv.platforms.push({x:mx, y:midY-(i%2?12:0), w:120, h:14, type:'plat', color:'#3f2a1a', branch:true, maze:'mid'}));
+  // 上线平台链（更高，需从中线再跳）
+  const upXs=[x0+140, x0+340, x0+560, x0+770];
+  upXs.forEach((ux,i)=> lv.platforms.push({x:ux, y:upperY-(i%2?0:10), w:110, h:14, type:'plat', color:'#38261a', branch:true, maze:'up'}));
+  // 死路：上线尽头再向上一段，尽头藏宝，需折返（藤蔓遮挡）
+  const deadX=x0+950;
+  lv.platforms.push({x:deadX, y:upperY-70, w:120, h:14, type:'plat', color:'#2f2016', branch:true, maze:'dead'});
+  lv.chests.push({x:deadX+82, y:upperY-70-24, w:28, h:22, open:false, taken:false, reward:'score', branch:true, label:'死路尽头 · 隐藏宝箱！'});
+  lv._decor.push({type:'vine', x:deadX-12, y:upperY-70});
+  lv._decor.push({type:'rubble', x:x0+520, y:midY});          // 破墙分隔迷宫
+  lv._decor.push({type:'abyss', x:x0+300, y:gy});             // 下线一侧深渊（纯视觉，无碰撞）
+  // 敌人分布在中/上线
+  lv.enemySpawns.push({type:'archer',   x:midXs[1]+60, y:midY});
+  lv.enemySpawns.push({type:'skeleton', x:upXs[1]+55,  y:upperY});
+  lv.enemySpawns.push({type:'patrol',   x:midXs[3]+60, y:midY});
+  // 三线后段汇合 → 回主线的下坡踏台
+  lv.platforms.push({x:x0+980, y:gy-64, w:64, h:14, type:'plat', color:'#4a3020', branch:true});
+  // 岔路口奥菲莉亚指引剪影（3 处，帧驱动隐现）
+  lv._decor.push({type:'opheliahint', x:x0+70,  y:gy-120,     ph:0.0});
+  lv._decor.push({type:'opheliahint', x:x0+430, y:midY-58,    ph:2.1});
+  lv._decor.push({type:'opheliahint', x:x0+770, y:upperY-48,  ph:4.2});
+  (lv._branchAvoid=lv._branchAvoid||[]).push({x:x0+520, r:640});
 }
 function saveBonusReturn(entranceTrigger){
   return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats), entrance: entranceTrigger ? {x:entranceTrigger.x, y:entranceTrigger.y, w:entranceTrigger.w, h:entranceTrigger.h} : null };
@@ -5504,6 +5816,7 @@ function drawWorld(){
   const vx0=camX-40, vx1=camX+VW+40;
   for(const p of level.platforms){ if(p.x+p.w<vx0||p.x>vx1)continue; drawPlatform(p); }
   for(const m of level.movers){ if(m.x+m.w<vx0||m.x>vx1)continue; drawPlatform(m); }
+  drawStructureDecor();   // 【新增】新增地图结构（城垛多层/登塔/迷宫）的世界层装饰
   for(const hz of level.hazards){ if(hz.x+hz.w<vx0||hz.x>vx1)continue; drawHazard(hz); }
   for(const bk of level.breakables){ if(bk.dead||bk.x+bk.w<vx0||bk.x>vx1)continue; drawBreakable(bk); }
   for(const ch of level.chests){ if(ch.taken||ch.x>vx1||ch.x+ch.w<vx0)continue; drawChest(ch); }
