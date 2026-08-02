@@ -1391,6 +1391,7 @@ function hexToRgba(hex,a){ const n=parseInt(hex.slice(1),16); return 'rgba('+((n
    ------------------------------------------------------------------------- */
 function drawPlatform(p){
   const style=platformStyleForAct();
+  if(p.color) style.body=style.top=p.color;
   const topH=p.type==='plat'?4:6;
   ctx.fillStyle=style.body; ctx.fillRect(p.x,p.y,p.w,p.h);
   ctx.fillStyle=style.top; ctx.fillRect(p.x,p.y,p.w,topH);
@@ -1526,9 +1527,9 @@ function drawTrigger(tr){
     ctx.strokeStyle='rgba(255,235,160,0.8)'; ctx.lineWidth=2; ctx.strokeRect(tr.x,tr.y,tr.w,tr.h);
   ctx.save(); ctx.textAlign='center';
   ctx.font='bold 12px "Courier New",monospace';
-  const label=tr.bonusAct===3 ? "→ Monica's Test（可选）" : '→ 隐藏挑战（可选）';
-  drawTextPanel(tr.x+tr.w/2-74,tr.y-28,148,18,'rgba(8,6,14,0.82)','rgba(255,235,160,0.72)');
-  ctx.fillStyle='#fff2b0'; ctx.fillText(label, tr.x+tr.w/2, tr.y-15);
+  drawTextPanel(tr.x+tr.w/2-74,tr.y-42,148,34,'rgba(8,6,14,0.82)','rgba(255,235,160,0.72)');
+  ctx.fillStyle='#fff2b0'; ctx.fillText('★ 趣味挑战 ★', tr.x+tr.w/2, tr.y-27);
+  ctx.fillText('跳上来即可进入（可选）', tr.x+tr.w/2, tr.y-12);
     ctx.fillStyle='#1a1206'; ctx.font='18px serif'; ctx.fillText('★', tr.x+tr.w/2, tr.y+tr.h/2+6);
     ctx.restore();
   }
@@ -1581,6 +1582,13 @@ function drawPickupItem(it){
 const GROUND_TOP = 600;         // 地面顶部世界 Y
 const LEVEL_H = 760;            // 世界高度
 const PLAYER_W = 22, PLAYER_H = 44;
+const BONUS_PLATFORM_CONFIGS = [
+  { platformX: 520, hint: '↑ 跳上来挑战趣味关卡（可选）' },
+  { platformX: 700, hint: '↑ 跳上来挑战趣味关卡（可选）' },
+  { platformX: 600, hint: '↑ 跳上来挑战趣味关卡（可选）' },
+  { platformX: 520, hint: '↑ 跳上来挑战趣味关卡（可选）' },
+  { platformX: 420, hint: '↑ 跳上来挑战趣味关卡（可选）' },
+];
 
 /* -------------------------------------------------------------------------
    跳跃能力常量 & 关卡通行性保障（修复"密集地刺无法通过"问题）
@@ -2510,20 +2518,29 @@ function buildBonusLevel(bonusAct){
 }
 function createBonusEntrance(lv, mainAct){
   const bonusAct = mainAct===ACT_ENGLAND ? 4 : (mainAct===ACT_FINAL ? 5 : mainAct+1);
-  const x = mainAct===ACT_FINAL ? 420 : Math.min(lv.width-980, Math.max(520, lv.width*0.28));
-  lv.triggers.push({x,y:GROUND_TOP-70,w:72,h:70,type:'bonusEntrance',fired:false,persist:true,bonusAct});
+  const cfg = BONUS_PLATFORM_CONFIGS[mainAct-1] || BONUS_PLATFORM_CONFIGS[0];
+  const platformX = Math.min(Math.max(40, cfg.platformX), Math.max(40, lv.width-220));
+  const platformY = GROUND_TOP - 88;
+  const platformW = 160;
+  const platformH = 14;
+  lv.platforms.push({x:platformX,y:platformY,w:platformW,h:platformH,type:'plat',color:'#c8a84b'});
+  const safeMin = platformX - 180;
+  const safeMax = platformX + platformW + 180;
+  if(lv.enemySpawns) lv.enemySpawns = lv.enemySpawns.filter(s=>s.x<safeMin || s.x>safeMax);
+  if(lv.hazards) lv.hazards = lv.hazards.filter(h=>h.x<safeMin || h.x+(h.w||0)>safeMax);
+  lv.triggers.push({x:platformX+30,y:platformY-60,w:100,h:60,type:'bonusEntrance',fired:false,persist:true,bonusAct,hint:cfg.hint});
 }
-function saveBonusReturn(){
-  return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats) };
+function saveBonusReturn(entranceTrigger){
+  return { actIndex, respawn:{x:player.x,y:player.y+player.h}, hp:player.hp, ammo:player.ammo, score, stats:Object.assign({},stats), entrance: entranceTrigger ? {x:entranceTrigger.x, y:entranceTrigger.y, w:entranceTrigger.w, h:entranceTrigger.h} : null };
 }
 function restoreMainMusic(){
   let mus=ACTS[actIndex]?ACTS[actIndex].music:'castle';
   if(actIndex===ACT_FINAL) mus=opheliaSaved?'hero':'imperial';
   Sound.setMusic(mus, 1);
 }
-function enterBonus(actNumber){
+function enterBonus(actNumber, entranceTrigger){
   if(bonusLevel) return;
-  bonusReturn=saveBonusReturn(); bonusLevel={act:actNumber, kind:BONUS_TITLES[actNumber-1]};
+  bonusReturn=saveBonusReturn(entranceTrigger); bonusLevel={act:actNumber, kind:BONUS_TITLES[actNumber-1]};
   level=buildBonusLevel(actNumber); player=makePlayer(level.playerStart.x, level.playerStart.y); player.hp=bonusReturn.hp; player.ammo=bonusReturn.ammo;
   enemies=[]; projectiles=[]; rocks=[]; particles=[]; floaters=[]; petals=[]; texts=[]; boss=null; bossStarted=false; companion=null;
   level.enemySpawns.forEach(s=>enemies.push(makeEnemy(s.type,s.x,s.y)));
@@ -2539,7 +2556,12 @@ function exitBonus(success){
   jumpEdge=atkEdge=rangedEdge=false;
   loadLevel(saved.actIndex, true);
   score=saved.score; stats=saved.stats; dom.scoreVal.textContent=score;
-  respawn={x:saved.respawn.x,y:saved.respawn.y}; player=makePlayer(saved.respawn.x, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.vx=0; player.vy=0; player.invuln=90;
+  respawn={x:saved.respawn.x,y:saved.respawn.y};
+  let safeX = saved.respawn.x;
+  if(saved.entrance){
+    safeX = Math.max(40, saved.entrance.x - PLAYER_W - 36);
+  }
+  player=makePlayer(safeX, saved.respawn.y); player.hp=saved.hp; player.ammo=saved.ammo; player.vx=0; player.vy=0; player.invuln=90;
   camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
   state=STATE.PLAY; goalReached=false; restoreMainMusic(); updateHUD();
   if(success && done) addFloater(player.x+player.w/2, player.y-35, '支线完成：'+done.kind, '#e8c25a', 14);
@@ -2961,7 +2983,9 @@ function updateTriggersAndCheckpoints(){
   }
   // 触发区
   for(const tr of level.triggers){ if(tr.fired && !tr.persist) continue;
-    if(rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, tr)){ fireTrigger(tr); }
+    const overlapping = rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, tr);
+    if(tr.type==='bonusEntrance' && tr._reentryLock && !overlapping) tr._reentryLock=false;
+    if(overlapping && !(tr.type==='bonusEntrance' && tr._reentryLock)){ fireTrigger(tr); }
   }
   // 隐藏宝箱
   for(const ch of level.chests){ if(ch.taken) continue;
@@ -3011,7 +3035,8 @@ function fireTrigger(tr){
   } else if(tr.type==='rescue'){ // 湖畔救援成功
     rescueOphelia();
   } else if(tr.type==='bonusEntrance'){
-    enterBonus(tr.bonusAct);
+    enterBonus(tr.bonusAct, tr);
+    tr._reentryLock = true;
   }
 }
 function updateCompanion(){
