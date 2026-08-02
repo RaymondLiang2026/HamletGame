@@ -2013,26 +2013,19 @@ function renderStory(){
   dom.storyBody.innerHTML=html;
 }
 function renderStoryPortrait(){
-  if(!storyPortraitCtx || !dom.storyPortrait) return;
-  const c=storyPortraitCtx, act=storyThemeAct(storyPage||{});
-  const pw=dom.storyPortrait.width, ph=dom.storyPortrait.height;
-  c.clearRect(0,0,pw,ph);
-  const gold=act===ACT_FINAL && opheliaSaved && !darkMode;
-  const doom=act===ACT_FINAL && (!opheliaSaved || darkMode);
-  const glow=c.createRadialGradient(pw/2,ph*.48,12,pw/2,ph*.48,Math.max(pw,ph)*.45);
-  glow.addColorStop(0,gold?'rgba(232,194,90,.24)':(doom?'rgba(96,45,135,.28)':'rgba(120,130,170,.22)'));
-  glow.addColorStop(1,'rgba(0,0,0,0)');
-  c.fillStyle=glow; c.fillRect(0,0,pw,ph);
-  c.save();
-  c.globalAlpha=.96;
-  const saved=ctx;
-  ctx=c;
+  const pc = document.getElementById('portraitCanvas');
+  if(!pc) return;
+  const pCtx = pc.getContext('2d');
+  const pw = pc.width, ph = pc.height;
+  pCtx.clearRect(0, 0, pw, ph);
+  const act = storyThemeAct(storyPage||{});
+  const savedCtx = ctx;
+  ctx = pCtx;
   try {
-    drawHamletPortrait(pw/2, ph-40, 4.1, act);
+    drawHamletPortrait(pw / 2, ph - 20, 4.0, act);
   } finally {
-    ctx=saved;
+    ctx = savedCtx;
   }
-  c.restore();
 }
 function tickStory(){
   updateStoryFx();
@@ -3823,8 +3816,10 @@ function drawPlayerWorld(){
 }
 function drawPlayerNickname(p){
   const nickname=getPlayerNickname();
-  const dlgShowing = (dom && dom.dlgLeft && dom.dlgLeft.classList.contains('show')) ||
-                     (dom && dom.dlgRight && dom.dlgRight.classList.contains('show'));
+  const dlgLeft = document.getElementById('dlgLeft');
+  const dlgRight = document.getElementById('dlgRight');
+  const dlgShowing = (dlgLeft && dlgLeft.classList.contains('show')) ||
+                     (dlgRight && dlgRight.classList.contains('show'));
   if(!nickname || dlgShowing) return;
   ctx.save();
   ctx.font='bold 12px "Courier New","Songti SC",monospace';
