@@ -2411,8 +2411,8 @@ function startBoss(entry){
 }
 // Boss 计划驱动：所有含 level.bossPlan 的关卡通用（城堡/宫廷/英格兰关底 + 终章雷欧提斯&克劳迪奥）
 function updateBossPlan(){
+  if(state!==STATE.PLAY || player.dead) return;
   if(boss){ updateBoss(); updateBossUlt(); return; }
-  if(state!==STATE.PLAY) return;
   const plan=level.bossPlan;
   for(const entry of plan){
     if(entry.defeated) continue;      // 已击败：跳过，检查下一个
@@ -2597,14 +2597,19 @@ function onPlayerDeath(){
 }
 function respawnAtCheckpoint(){
   hide(dom.loseScreen);
-  // Boss 战失败：重置 Boss
+  // Boss 战失败：重置 Boss，并允许玩家从 Boss 战前检查点重新触发本轮 Boss
   if(boss){ boss=null; bossStarted=false; bossUltTimer=0;
+    if(activeBossEntry){ activeBossEntry.started=false; }
+    activeBossEntry=null;
     // 清除 boss 阶段生成的毒池
-    level.hazards=level.hazards.filter(h=>!(h.type==='poison'&&h.x>level.bossArena.x-260&&h.y<GROUND_TOP));
-    enemies=enemies.filter(e=>e.x<level.bossArena.x); // 清 boss 场喽啰
+    level.hazards=level.hazards.filter(h=>!(h.type==='poison'&&level.bossArena&&h.x>level.bossArena.x-260&&h.y<GROUND_TOP));
+    if(level.bossArena) enemies=enemies.filter(e=>e.x<level.bossArena.x); // 清 boss 场喽啰
   }
   projectiles=[]; rocks=[];
-  player=makePlayer(respawn.x, respawn.y);
+  const spawnX = Number.isFinite(respawn&&respawn.x) ? respawn.x : level.playerStart.x;
+  const spawnY = Number.isFinite(respawn&&respawn.y) ? respawn.y : level.playerStart.y;
+  respawn={x:spawnX, y:spawnY};
+  player=makePlayer(spawnX, spawnY);
   if(!hasBow) player.ammo=0;
   player.invuln=90;
   camX=clamp(player.x-VW/2,0,level.width-VW); camY=clamp(player.y-VH*0.55,0,level.height-VH);
