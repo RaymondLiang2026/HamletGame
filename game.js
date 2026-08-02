@@ -406,7 +406,10 @@ function launchFirework(x,y){
   for(let i=0;i<26;i++){ const a=6.283*i/26,s=rand(2.4,4.2); fireworks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(34,52),max:52,color:c,size:rand(2,3.5)}); }
 }
 function addFloater(x,y,text,color,size){ floaters.push({x,y,text,color,size:size||14,life:56,max:56,world:true}); }
-function addScreenFloater(x,y,text,color,size,life){ floaters.push({x,y,text,color,size:size||14,life:life||120,max:life||120,world:false}); }
+function addScreenFloater(x,y,text,color,size,life){
+  if(!floaters) return;
+  floaters.push({x,y,text,color,size:size||14,life:life||120,max:life||120,world:false});
+}
 function drawTextPanel(x,y,w,h,fill,stroke){
   ctx.fillStyle=fill||'rgba(8,6,14,0.78)'; ctx.fillRect(x,y,w,h);
   ctx.strokeStyle=stroke||'rgba(232,194,90,0.55)'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
@@ -2192,6 +2195,7 @@ function loadLevel(idx, keepScore){
     Dialog.push([ DL('right','奥菲莉亚 · 亡魂','（湖底的歌声）他不会回来了吗……','He will not come again.') ]);
   }
   // HUD
+  if(idx===ACT_LAKE) addScreenFloater(W/2, 148, '救援奥菲莉亚：倒计时内抵达水中花环，水面即死', '#dfeaf5', 15, 150);
   dom.levelLabel.textContent = ACTS[idx].name;
   dom.timerRow.style.display = (idx===ACT_LAKE)?'block':'none';
   updateBowHintUI();
@@ -3135,6 +3139,7 @@ function render(){
     ctx.scale(ZOOM,ZOOM);
     ctx.translate(-camX,-camY);
     drawWorld();
+    drawWorldTextLayer();
     ctx.restore();
     // 前景氛围（屏幕空间）
     drawForeground();
@@ -3144,6 +3149,7 @@ function render(){
     if(bossStarted && boss && !boss.dead) drawBossBar();
     if(bossStarted && player && !player.dead) drawEnergyBar();
     if(bonusLevel) drawBonusOverlay();
+    drawScreenFloaters();
     if(actIndex===3 && state===STATE.PLAY) {/* timer in HUD */}
   }
 }
@@ -3155,9 +3161,8 @@ function drawWorld(){
   for(const hz of level.hazards){ if(hz.x+hz.w<vx0||hz.x>vx1)continue; drawHazard(hz); }
   for(const bk of level.breakables){ if(bk.dead||bk.x+bk.w<vx0||bk.x>vx1)continue; drawBreakable(bk); }
   for(const ch of level.chests){ if(ch.taken||ch.x>vx1||ch.x+ch.w<vx0)continue; drawChest(ch); }
-  for(const tr of level.triggers){ if(tr.x+tr.w<vx0||tr.x>vx1)continue; drawTrigger(tr); }
+  for(const tr of level.triggers){ if(tr.x+tr.w<vx0||tr.x>vx1)continue; if(tr.type==='bonusEntrance')continue; drawTrigger(tr); }
   for(const cp of level.checkpoints){ if(cp.x<vx0||cp.x>vx1)continue; drawCheckpoint(cp); }
-  if(level.bowPickup) drawBowPickup(level.bowPickup);
   for(const it of level.pickups){ if(it.taken||it.x>vx1||it.x+it.w<vx0)continue; drawPickupItem(it); }
   // 目标门
   if(!goalReached && (actIndex<3 || bonusLevel)) drawGoal(level.goalX, GROUND_TOP);
@@ -3175,8 +3180,15 @@ function drawWorld(){
   else if(boss && boss.dead && boss.deathT>0){ ctx.save(); ctx.globalAlpha=clamp(boss.deathT/120,0,1); drawBoss(boss); ctx.restore(); }
   // 玩家
   if(player && !player.dead){ drawPlayerWorld(); }
-  // 粒子/飘字/花瓣
+  // 粒子/花瓣
   drawParticlesWorld();
+}
+function drawWorldTextLayer(){
+  if(!level) return;
+  const vx0=camX-40, vx1=camX+VW+40;
+  for(const tr of level.triggers){ if(tr.x+tr.w<vx0||tr.x>vx1)continue; if(tr.type==='bonusEntrance') drawTrigger(tr); }
+  if(level.bowPickup) drawBowPickup(level.bowPickup);
+  drawWorldFloaters();
 }
 function drawBonusOverlay(){
   ctx.save();
@@ -3230,7 +3242,25 @@ function drawParticlesWorld(){
   ctx.globalAlpha=1;
   for(const pt of petals){ ctx.save(); ctx.globalAlpha=clamp(pt.life/60,0,1); ctx.translate(pt.x,pt.y); ctx.rotate(pt.rot); ctx.fillStyle=pt.color; ctx.fillRect(-pt.size/2,-pt.size/3,pt.size,pt.size*0.66); ctx.restore(); }
   ctx.globalAlpha=1;
-  for(const f of floaters){ ctx.globalAlpha=clamp(f.life/f.max,0,1); ctx.fillStyle=f.color; ctx.font='bold '+f.size+'px "Courier New",serif'; ctx.textAlign='center'; ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.7)'; ctx.strokeText(f.text,f.x,f.y); ctx.fillText(f.text,f.x,f.y); }
+}
+function drawWorldFloaters(){
+  for(const f of floaters){
+    if(f.world===false) continue;
+    ctx.globalAlpha=clamp(f.life/f.max,0,1); ctx.font='bold '+f.size+'px "Courier New",serif'; ctx.textAlign='center';
+    const tw=ctx.measureText(f.text).width, pad=6;
+    drawTextPanel(f.x-tw/2-pad,f.y-f.size-7,tw+pad*2,f.size+10,'rgba(8,6,14,0.72)','rgba(232,194,90,0.38)');
+    ctx.fillStyle=f.color; ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.8)'; ctx.strokeText(f.text,f.x,f.y); ctx.fillText(f.text,f.x,f.y);
+  }
+  ctx.globalAlpha=1; ctx.textAlign='left';
+}
+function drawScreenFloaters(){
+  for(const f of floaters){
+    if(f.world!==false) continue;
+    ctx.globalAlpha=clamp(f.life/f.max,0,1); ctx.font='bold '+f.size+'px "Courier New",serif'; ctx.textAlign='center';
+    const tw=ctx.measureText(f.text).width, pad=8;
+    drawTextPanel(f.x-tw/2-pad,f.y-f.size-8,tw+pad*2,f.size+12,'rgba(8,6,14,0.82)','rgba(232,194,90,0.55)');
+    ctx.fillStyle=f.color; ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.85)'; ctx.strokeText(f.text,f.x,f.y); ctx.fillText(f.text,f.x,f.y);
+  }
   ctx.globalAlpha=1; ctx.textAlign='left';
 }
 function drawForeground(){
@@ -3248,7 +3278,7 @@ function drawSegmentBanner(){
   if(!level.segments||state!==STATE.PLAY) return;
   let seg=0; for(let i=0;i<level.segments.length;i++){ if(player.x>=level.segments[i].x) seg=i; }
   if(seg!==curSeg){ curSeg=seg; segBannerT=90; }
-  if(segBannerT>0){ segBannerT--; ctx.save(); ctx.globalAlpha=clamp(segBannerT/30,0,1)*0.9; ctx.fillStyle=ACTS[actIndex].accent; ctx.font='bold 16px serif'; ctx.textAlign='center'; ctx.fillText('· '+level.segments[seg].name+' ·', W/2, 64); ctx.restore(); }
+  if(segBannerT>0){ segBannerT--; ctx.save(); ctx.globalAlpha=clamp(segBannerT/30,0,1)*0.9; drawTextPanel(12,40,190,28,'rgba(8,6,14,0.82)','rgba(232,194,90,0.48)'); ctx.fillStyle=ACTS[actIndex].accent; ctx.font='bold 16px serif'; ctx.textAlign='center'; ctx.fillText('· '+level.segments[seg].name+' ·', 107, 59); ctx.restore(); }
 }
 let segBannerT=0;
 
@@ -3257,7 +3287,7 @@ let segBannerT=0;
    ------------------------------------------------------------------------- */
 function drawBossBar(){
   const bw=560, bx=(W-bw)/2, by=26;
-  ctx.fillStyle='rgba(8,6,14,0.7)'; ctx.fillRect(bx-4,by-18,bw+8,34);
+  ctx.fillStyle='rgba(8,6,14,0.82)'; ctx.fillRect(bx-4,by-18,bw+8,34);
   ctx.strokeStyle='rgba(232,194,90,0.5)'; ctx.lineWidth=1; ctx.strokeRect(bx-4,by-18,bw+8,34);
   ctx.fillStyle='#c4b98f'; ctx.font='12px "Courier New",serif'; ctx.textAlign='center';
   const label=(boss.def&&boss.def.label)||'BOSS';
@@ -3276,7 +3306,7 @@ function drawBossBar(){
 }
 function drawEnergyBar(){
   const bw=160, bx=14, by=H-58;
-  ctx.fillStyle='rgba(8,6,14,0.6)'; ctx.fillRect(bx-2,by-2,bw+4,12);
+  ctx.fillStyle='rgba(8,6,14,0.78)'; ctx.fillRect(bx-2,by-2,bw+4,12);
   ctx.fillStyle='#2a2440'; ctx.fillRect(bx,by,bw,8);
   const r=clamp(player.energy/player.maxEnergy,0,1);
   const full=r>=1;

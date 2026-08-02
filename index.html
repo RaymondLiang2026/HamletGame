@@ -14,28 +14,28 @@
   .mono{font-family:"Courier New",Consolas,monospace}
 
   /* HUD */
-  #hud{position:absolute;top:0;left:0;right:0;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-size:13px;letter-spacing:.5px;text-shadow:1px 1px 0 #000;font-family:"Courier New",monospace}
-  #hud .box{background:rgba(8,6,14,.55);border:1px solid rgba(232,194,90,.4);padding:6px 10px;border-radius:5px;line-height:1.55}
+  #hud{position:absolute;top:0;left:0;right:0;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;font-size:13px;letter-spacing:.5px;text-shadow:1px 1px 0 #000;font-family:"Courier New",monospace;z-index:8}
+  #hud .box{background:rgba(8,6,14,.76);border:1px solid rgba(232,194,90,.52);padding:6px 10px;border-radius:5px;line-height:1.55;box-shadow:0 4px 16px rgba(0,0,0,.45)}
   .hp-track{display:inline-block;width:150px;height:12px;border:1px solid #000;background:#3a0d0d;vertical-align:middle;margin-left:6px;border-radius:2px;overflow:hidden}
   .hp-fill{height:100%;background:linear-gradient(#e23b3b,#8b1a1a);transition:width .12s}
   .oph-fill{background:linear-gradient(#7fd4ee,#2a7fa5)}
   #timer{color:#ff5a5a;font-weight:bold}
   #ammoRow{color:#c9b6f0}
-  #scorePanel{position:absolute;top:8px;right:10px;text-align:right;pointer-events:none;z-index:3;font-family:"Courier New",monospace}
+  #scorePanel{position:absolute;top:8px;right:10px;text-align:right;pointer-events:none;z-index:8;font-family:"Courier New",monospace}
   #scoreVal{font-size:30px;font-weight:bold;color:var(--gold);text-shadow:2px 2px 0 #000,0 0 16px rgba(232,194,90,.55);line-height:1}
   #scoreLbl{font-size:11px;color:#c9b98a;letter-spacing:3px}
   #combo{font-size:12px;color:#7fd4ee;height:14px}
   .pop{animation:pop .28s ease}
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.28);color:#fff}100%{transform:scale(1)}}
-  #muteBtn{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:7;pointer-events:auto;cursor:pointer;background:rgba(8,6,14,.6);border:1px solid rgba(232,194,90,.5);color:var(--gold);border-radius:6px;padding:4px 10px;font-family:"Courier New",monospace;font-size:13px}
+  #muteBtn{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:9;pointer-events:auto;cursor:pointer;background:rgba(8,6,14,.72);border:1px solid rgba(232,194,90,.5);color:var(--gold);border-radius:6px;padding:4px 10px;font-family:"Courier New",monospace;font-size:13px}
   /* 持续按键提示条 */
-  #ctrlHint{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);z-index:3;pointer-events:none;font-family:"Courier New",monospace;font-size:12px;background:rgba(8,6,14,.5);border:1px solid rgba(232,194,90,.28);border-radius:20px;padding:4px 14px;color:#c4b98f;white-space:nowrap;display:flex;gap:10px;align-items:center}
+  #ctrlHint{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);z-index:8;pointer-events:none;font-family:"Courier New",monospace;font-size:12px;background:rgba(8,6,14,.72);border:1px solid rgba(232,194,90,.42);border-radius:20px;padding:4px 14px;color:#c4b98f;white-space:nowrap;display:flex;gap:10px;align-items:center;box-shadow:0 4px 14px rgba(0,0,0,.45)}
   #ctrlHint .k{display:inline-block;background:#1c1626;border:1px solid #4a4160;border-radius:4px;padding:0 6px;color:#ece6f2;margin-right:3px}
   #ctrlHint .locked{opacity:.4}
   #ctrlHint .hot{color:#c9b6f0;text-shadow:0 0 8px rgba(185,139,255,.6)}
 
   /* Overlays */
-  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,4,9,.84);backdrop-filter:blur(2px);padding:18px;z-index:5}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(5,4,9,.84);backdrop-filter:blur(2px);padding:18px;z-index:20}
   .overlay.hidden{display:none}
   .title{font-size:clamp(30px,5.4vw,58px);color:var(--gold);letter-spacing:5px;text-shadow:3px 3px 0 #000,0 0 28px rgba(232,194,90,.55);margin-bottom:6px}
   .subtitle{font-size:clamp(13px,1.8vw,18px);color:#c4b98f;margin-bottom:20px;letter-spacing:2px}
@@ -48,7 +48,7 @@
   .big{font-size:clamp(34px,6vw,64px)}
   .win{color:#8ee88e;text-shadow:3px 3px 0 #000,0 0 24px rgba(122,214,122,.5)}
   .lose{color:#e23b3b;text-shadow:3px 3px 0 #000,0 0 24px rgba(226,59,59,.5)}
-  #levelName{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);text-align:center;font-size:clamp(22px,4vw,42px);color:var(--gold);letter-spacing:6px;text-shadow:3px 3px 0 #000;pointer-events:none;opacity:0;transition:opacity .5s;z-index:4}
+  #levelName{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);text-align:center;font-size:clamp(22px,4vw,42px);color:var(--gold);letter-spacing:6px;text-shadow:3px 3px 0 #000;pointer-events:none;opacity:0;transition:opacity .5s;z-index:8}
   #levelName small{display:block;font-size:.4em;color:#c4b98f;letter-spacing:3px;margin-top:10px}
   .fade{opacity:1 !important}
   .scoreTable{margin:0 auto 22px;font-size:15px;color:#d8d0e0;line-height:2;min-width:300px;font-family:"Courier New",monospace}
@@ -57,7 +57,7 @@
 
   /* 剧情过场 */
   #storyScreen{background:rgba(3,2,6,.9)}
-  .storyWrap{max-width:720px;width:92%}
+  .storyWrap{max-width:720px;width:92%;background:rgba(8,6,14,.62);border:1px solid rgba(232,194,90,.28);border-radius:14px;padding:22px;box-shadow:0 16px 44px rgba(0,0,0,.62)}
   #storyAct{font-size:14px;letter-spacing:6px;color:var(--gold);opacity:.8;margin-bottom:10px}
   #storyTitle{font-size:clamp(22px,3.6vw,36px);color:var(--gold);letter-spacing:3px;margin-bottom:26px;text-shadow:2px 2px 0 #000}
   #storyBody{min-height:200px;text-align:left;font-size:clamp(14px,1.9vw,19px);line-height:2.05;color:#e6dfce}
@@ -73,7 +73,7 @@
   #tLeft{left:14px}#tRight{left:92px}#tJump{right:158px}#tAtk{right:82px;background:rgba(139,26,26,.28);border-color:rgba(226,59,59,.6)}#tRanged{right:14px;background:rgba(185,139,255,.22);border-color:rgba(185,139,255,.6)}
 
   /* 常驻对白栏（非阻断：显示时游戏继续，左哈姆雷特 / 右登场角色，淡入淡出） */
-  #dlgBar{position:absolute;top:70px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:0 14px;pointer-events:none;z-index:3;gap:10px;font-family:"Georgia","Songti SC",serif}
+  #dlgBar{position:absolute;top:70px;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:0 14px;pointer-events:none;z-index:9;gap:10px;font-family:"Georgia","Songti SC",serif}
   .dlg{max-width:44%;background:linear-gradient(rgba(12,9,20,.86),rgba(12,9,20,.66));border:1px solid rgba(232,194,90,.32);border-radius:9px;padding:7px 12px;opacity:0;transform:translateY(-10px);transition:opacity .42s ease,transform .42s ease;text-shadow:1px 1px 0 #000;box-shadow:0 3px 14px rgba(0,0,0,.5)}
   .dlg.show{opacity:1;transform:translateY(0)}
   .dlg.left{border-left:3px solid #e8c25a}
@@ -84,7 +84,7 @@
   .dlg .en{display:block;font-size:11px;font-style:italic;color:#9a94a8;margin-top:2px;line-height:1.3}
 
   /* Boss 战新手引导：非阻断提示面板 */
-  #bossGuide{position:absolute;left:50%;top:118px;transform:translate(-50%,-8px);z-index:4;width:min(88%,520px);padding:14px 18px;background:linear-gradient(rgba(12,8,18,.82),rgba(12,8,18,.62));border:1px solid rgba(232,194,90,.46);border-left:4px solid var(--gold);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.55),0 0 28px rgba(232,194,90,.16);pointer-events:none;opacity:0;transition:opacity .35s ease,transform .35s ease;text-align:left;text-shadow:1px 1px 0 #000;font-family:"Georgia","Songti SC",serif}
+  #bossGuide{position:absolute;left:50%;top:118px;transform:translate(-50%,-8px);z-index:10;width:min(88%,520px);padding:14px 18px;background:linear-gradient(rgba(12,8,18,.92),rgba(12,8,18,.78));border:1px solid rgba(232,194,90,.58);border-left:4px solid var(--gold);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.66),0 0 28px rgba(232,194,90,.2);pointer-events:none;opacity:0;transition:opacity .35s ease,transform .35s ease;text-align:left;text-shadow:1px 1px 0 #000;font-family:"Georgia","Songti SC",serif}
   #bossGuide.show{opacity:1;transform:translate(-50%,0)}
   #bossGuide .guideQuote{font-size:12px;color:#c4b98f;letter-spacing:1px;margin-bottom:8px;font-style:italic;text-align:center}
   #bossGuide .guideRows{display:grid;gap:6px;font-size:14px;line-height:1.45;color:#f0e9d6}
