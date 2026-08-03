@@ -6161,7 +6161,7 @@ function drawCabinTraps(){
     ctx.fillStyle='#241a12'; ctx.fillRect(ex-16, ey, 32, 52);
     const dg=ctx.createLinearGradient(ex-14,ey,ex-14,ey+52); dg.addColorStop(0,'rgba(120,180,200,'+(0.3*a).toFixed(3)+')'); dg.addColorStop(1,'rgba(30,50,66,0.9)'); ctx.fillStyle=dg; ctx.fillRect(ex-14,ey+2,28,48);
     ctx.strokeStyle='rgba(255,235,160,'+a.toFixed(2)+')'; ctx.lineWidth=2; ctx.strokeRect(ex-14,ey+2,28,48);
-    ctx.fillStyle='rgba(255,235,160,'+a.toFixed(2)+')'; ctx.font='bold 10px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('返回甲板', ex, ey-6); ctx.textAlign='left';
+    ctx.fillStyle='rgba(255,235,160,'+a.toFixed(2)+')'; ctx.font='bold 10px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillText('返回甲板 (ESC)', ex, ey-6); ctx.textAlign='left';
   }
 }
 
