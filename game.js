@@ -5540,7 +5540,7 @@ function updateCabin(){
     if(frame-cabinWaveT>96){
       if(cabinWave+1<CABIN_WAVES.length) startCabinWave(cabinWave+1);
       else { cabinWaveState='done'; cabinCleared=true;
-        addScreenFloater(W/2,150,'船舱肃清完毕！走到右侧舱口 ↑ 返回甲板','#ffe6a0',15,180);
+        addScreenFloater(W/2,150,'船舱肃清完毕！走到右侧舱口 ↑ / ESC 返回甲板','#ffe6a0',15,180);
         Sound.checkpoint(); }
     }
   } else if(cabinWaveState==='done'){
@@ -5550,7 +5550,7 @@ function updateCabin(){
 function checkCabinReturn(){
   const ex=cabinLevel.exitX;
   const near=Math.abs((player.x+player.w/2)-ex)<52 && player.onGround;
-  if(near){ cabinPrompt='↑ 返回甲板'; if(jumpEdge){ jumpEdge=false; startCabinExit(); } }
+  if(near){ cabinPrompt='↑ / ESC 返回甲板'; if(jumpEdge){ jumpEdge=false; startCabinExit(); } }
 }
 // 陷阱统一更新：活板门开合 / 天花板下压 / 舷窗爆裂水柱 + 减速 debuff
 function updateCabinTraps(){
