@@ -1465,6 +1465,103 @@ function compInBreathing(x, act){
 function compThirds(){ return [W*0.333, W*0.667]; }
 
 /* -------------------------------------------------------------------------
+   奥菲莉亚故事立绘（ACT_LAKE 专用）
+   -------------------------------------------------------------------------
+   4 幅前拉斐尔派油画立绘 Ken-Burns 轮播：
+   1. 相遇 · 花园誓言   2. 拒绝 · 修道院去吧
+   3. 狂野 · 花冠疯女   4. 永别 · 湖上漂流
+   淡入淡出 + 慢速缩放平移 + 冷月蓝紫调色 + 边缘 vignette，作为
+   湖边彩蛋关的梦境背景层，讲述哈姆雷特与奥菲莉亚的悲剧弧线。
+   ------------------------------------------------------------------------- */
+const OPHELIA_STORY_SRCS = [
+  'assets/ophelia/01_meeting.jpg',
+  'assets/ophelia/02_rejection.jpg',
+  'assets/ophelia/03_madness.jpg',
+  'assets/ophelia/04_farewell.jpg'
+];
+const OPHELIA_STORY_IMGS = [];
+let opheliaStoryLoaded = false;
+function ensureOpheliaStoryImgs(){
+  if(opheliaStoryLoaded) return;
+  opheliaStoryLoaded = true;
+  for(let i=0;i<OPHELIA_STORY_SRCS.length;i++){
+    const im = new Image();
+    im.src = OPHELIA_STORY_SRCS[i];
+    im.dataset && (im.dataset.i=i);
+    OPHELIA_STORY_IMGS.push(im);
+  }
+}
+function drawOpheliaStoryBg(){
+  ensureOpheliaStoryImgs();
+  // 单张展示 6.5 秒 + 淡入淡出各 1.5 秒（60fps → 390 帧一张）
+  const HOLD = 390;
+  const FADE = 90;
+  const cycle = HOLD;
+  const t = (frame|0);
+  const cur = Math.floor(t / cycle) % OPHELIA_STORY_IMGS.length;
+  const nxt = (cur+1) % OPHELIA_STORY_IMGS.length;
+  const localT = t % cycle;                       // 0..HOLD-1
+  const fadeAlpha = localT < (HOLD-FADE) ? 0 : (localT - (HOLD-FADE))/FADE;
+  const curImg = OPHELIA_STORY_IMGS[cur];
+  const nxtImg = OPHELIA_STORY_IMGS[nxt];
+  // Ken-Burns 参数：随立绘 index 与全局时间做缓慢缩放/平移
+  function kenBurns(img, phase, extraT){
+    if(!img || !img.complete || !img.naturalWidth) return;
+    const p = phase; // 0..1 within this image's hold
+    // 轻微缩放 1.02 → 1.10；平移 ±40px；每张随索引方向不同（左右交替）
+    const dir = (extraT%2===0)?1:-1;
+    const scale = 1.02 + p*0.08;
+    const dx = dir * (p-0.5) * 40;
+    const dy = Math.sin(p*Math.PI) * 12;
+    const dw = W*scale, dh = H*scale;
+    const ox = (W-dw)/2 + dx;
+    const oy = (H-dh)/2 + dy;
+    ctx.drawImage(img, ox, oy, dw, dh);
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.55 * (1 - fadeAlpha);      // 半透明梦境感
+  kenBurns(curImg, (localT % cycle) / cycle, cur);
+  if(fadeAlpha > 0){
+    ctx.globalAlpha = 0.55 * fadeAlpha;
+    kenBurns(nxtImg, 0, nxt);
+  }
+  ctx.restore();
+  // 冷月蓝紫 tint（把立绘融入夜色湖畔）
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  const tint = ctx.createLinearGradient(0,0,0,H);
+  tint.addColorStop(0, 'rgba(20,14,36,0.9)');
+  tint.addColorStop(0.5, 'rgba(30,20,52,0.4)');
+  tint.addColorStop(1, 'rgba(10,6,18,0.9)');
+  ctx.fillStyle = tint;
+  ctx.fillRect(0,0,W,H);
+  ctx.restore();
+  // 四角 vignette（把边缘吞进黑暗，聚焦中央）
+  ctx.save();
+  const vg = ctx.createRadialGradient(W/2,H/2, Math.min(W,H)*0.35, W/2,H/2, Math.max(W,H)*0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(6,4,12,0.85)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0,0,W,H);
+  ctx.restore();
+  // 底部立绘标题（每张不同的莎翁引文，随立绘淡入淡出）
+  const titles = [
+    'Doubt thou the stars are fire...  // 相遇 · 花园誓言',
+    'Get thee to a nunnery.            // 拒绝 · 修道院去吧',
+    'Rosemary — that\u2019s for remembrance.  // 狂野 · 花冠疯女',
+    'And will he not come again?       // 永别 · 湖上漂流'
+  ];
+  ctx.save();
+  const titleAlpha = (localT < FADE) ? (localT/FADE) : (localT < HOLD-FADE ? 1 : (HOLD-localT)/FADE);
+  ctx.globalAlpha = 0.55 * Math.max(0,Math.min(1,titleAlpha));
+  ctx.fillStyle = 'rgba(230,220,200,1)';
+  ctx.font = 'italic 13px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(titles[cur], W/2, H-14);
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------------
    6. 背景绘制（视差层，屏幕空间；不受世界缩放影响）
    每幕不同氛围；失败路线 darkMode 会切换阴郁哥特配色
    ------------------------------------------------------------------------- */
@@ -1491,6 +1588,8 @@ function drawBackground(){
   const grd = ctx.createLinearGradient(0,0,0,H);
   grd.addColorStop(0, sky[0]); grd.addColorStop(0.5, sky[1]); grd.addColorStop(1, sky[2]);
   ctx.fillStyle=grd; ctx.fillRect(0,0,W,H);
+  // 彩蛋关湖边：Ken-Burns 立绘轮播讲述哈姆雷特与奥菲莉亚的故事
+  if(actIndex===ACT_LAKE) drawOpheliaStoryBg();
   // 第五幕 Boss<30% 血量：天空渐染暗红压迫
   drawFinalSkyTint();
 
