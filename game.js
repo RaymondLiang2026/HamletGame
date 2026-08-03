@@ -99,16 +99,28 @@ const KEYMAP = {
 };
 let jumpEdge=false, atkEdge=false, rangedEdge=false; // 上升沿检测
 
-// 趣味关卡 Esc 退出需要最高优先级捕获，避免 story/pause/messageBoard 等状态先吃掉按键。
+function canForceExitCabin(){
+  return state===STATE.PLAY && actIndex===ACT_ENGLAND && cabinActive && cabinPhase==='active';
+}
+function handleCabinEscExit(e){
+  if(!(e.code==='Escape'||e.key==='Escape'||e.keyCode===27) || !canForceExitCabin()) return false;
+  startCabinExit();
+  addScreenFloater(W/2,150,'ESC 强制撤离 · 返回甲板','#ffe0b0',15,90);
+  e.preventDefault(); e.stopImmediatePropagation();
+  return true;
+}
+// 趣味关卡 / 第四幕船舱 Esc 退出需要最高优先级捕获，避免 story/pause/messageBoard 等状态先吃掉按键。
 window.addEventListener('keydown', e=>{
+  if(handleCabinEscExit(e)) return;
   if(e.code==='Escape' && bonusLevel){
     e.preventDefault(); e.stopImmediatePropagation();
     exitBonus(state==='messageBoard');
     return;
   }
 }, true);
-// 二级保险：document 捕获阶段再次强制拦截 Esc（exitBonus 幂等），确保任何状态下都能退出趣味关卡。
+// 二级保险：document 捕获阶段再次强制拦截 Esc（exitBonus / 船舱强制撤离均幂等），确保任何状态下都能退出。
 document.addEventListener('keydown', e=>{
+  if(handleCabinEscExit(e)) return;
   if((e.code==='Escape'||e.key==='Escape'||e.keyCode===27) && bonusLevel){
     exitBonus(false);
     e.stopImmediatePropagation(); e.preventDefault();
