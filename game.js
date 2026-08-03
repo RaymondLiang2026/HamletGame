@@ -1390,6 +1390,81 @@ function drawWeatherParticles(){
 }
 
 /* -------------------------------------------------------------------------
+   构图规则模块（Composition Rules）
+   -------------------------------------------------------------------------
+   五幕共享的装饰排布策略，把"元素堆叠"改为"艺术构图"：
+   - 三分法锚点：视觉重心放在 1/3、2/3 交点，而非画面中央
+   - 焦点/留白：每幕定义焦点 X 与呼吸区带，主角活动区少堆装饰
+   - 节奏化位置：边缘密-中央疏的非均匀分布 + 黄金比例扰动
+   - S 形/弧形引导线：装饰沿曲线排布形成视觉引导
+   - 色彩呼应：全幕共享一枚焦点色，用于点睛（火焰/月光/金饰）
+   仅影响装饰绘制，不修改平台/碰撞/角色坐标。
+   ------------------------------------------------------------------------- */
+// 焦点 X（构图重心，屏幕坐标）
+function compFocalX(act){
+  switch(act){
+    case ACT_CASTLE:  return W*0.666;   // 城堡：右2/3远塔为焦点
+    case ACT_COURT:   return W*0.5;     // 宫廷：中心王座轴
+    case ACT_ESCAPE:  return W*0.333;   // 逃亡：左1/3远山
+    case ACT_ENGLAND: return W*0.666;   // 海景：右2/3灯塔月柱
+    case ACT_FINAL:   return W*0.5;     // 终局：中央崩塌焦点
+  }
+  return W*0.5;
+}
+// 留白区带 - 主角视线附近减少装饰
+function compBreathingBand(act){
+  const fx=compFocalX(act);
+  // 焦点区正下方给玩家留出"透气"通道
+  return [fx-70, fx+70];
+}
+// 焦点色 - 全幕呼应
+function compAccent(act){
+  switch(act){
+    case ACT_CASTLE:  return 'rgba(232,204,120,0.9)'; // 火把金
+    case ACT_COURT:   return 'rgba(232,194,90,0.85)'; // 宫廷金
+    case ACT_ESCAPE:  return 'rgba(224,168,216,0.85)';// 朋克粉紫
+    case ACT_ENGLAND: return 'rgba(255,190,90,0.85)'; // 灯塔橙
+    case ACT_FINAL:   return 'rgba(255,120,40,0.9)';  // 熔岩橙
+  }
+  return 'rgba(220,220,220,0.8)';
+}
+// 艺术节奏位置：返回 [0..1] 之间的 count 个非均匀位置
+// edgeBias 越大越偏向边缘（框景效果），centerGap 强制中央留白
+function compRhythm(seed, count, edgeBias, centerGap){
+  const eb = edgeBias!==undefined ? edgeBias : 0.45;
+  const cg = centerGap!==undefined ? centerGap : 0.10;
+  const arr=[];
+  for(let i=0;i<count;i++){
+    const base=(i+0.5)/count;
+    // 边缘偏置：中心区域推向两侧
+    const centerDist=Math.abs(base-0.5)*2;
+    const push=(1-centerDist)*eb*0.35*(hnoise(seed*11+i*7)-0.5);
+    // 黄金比例扰动
+    const jitter=(hnoise(seed*3+i*13)-0.5)*0.10;
+    let x=base+push+jitter;
+    // 中央留白：位于 [0.5-cg, 0.5+cg] 时往边缘推
+    if(x>0.5-cg && x<0.5+cg){
+      x = x<0.5 ? (0.5-cg) - (0.5-cg-x)*0.6 : (0.5+cg) + (x-0.5-cg)*0.6;
+    }
+    arr.push(clamp(x, 0.03, 0.97));
+  }
+  return arr;
+}
+// S 形引导线 Y 位移（t∈[0..1]，用于装饰沿曲线排布）
+function compGuideY(t, amp){
+  return Math.sin(t*Math.PI)*amp + Math.sin(t*Math.PI*2)*amp*0.28;
+}
+// 屏幕横向密度渐变（中央稀疏，两端密集）
+function compDensityAt(nx){ return 0.35 + Math.abs(nx-0.5)*2 * 0.65; }
+// 屏幕 x 是否在留白带内（true = 应保留，避免堆装饰）
+function compInBreathing(x, act){
+  const [b0,b1]=compBreathingBand(act);
+  return (x>b0 && x<b1);
+}
+// 屏幕横向"三分法"锚点
+function compThirds(){ return [W*0.333, W*0.667]; }
+
+/* -------------------------------------------------------------------------
    6. 背景绘制（视差层，屏幕空间；不受世界缩放影响）
    每幕不同氛围；失败路线 darkMode 会切换阴郁哥特配色
    ------------------------------------------------------------------------- */
@@ -1468,47 +1543,74 @@ function drawFarLayerFx(){
       ctx.lineTo(bx+W,H); ctx.closePath(); ctx.fill(); }
     ctx.restore();
   } else if(actIndex===ACT_FINAL){
-    // 第五幕远景：多层天空云带 + 极远残破城墙 + 远景城堡废墟（断裂塔楼）
+    // 第五幕远景：多层天空云带 + 焦点式废墟群落
+    // 云带保持横向流动，但在中央焦点上方留出"天光洞口"效果（drawFinalCloudBands 内已实现放射式）
     drawFinalCloudBands();
-    // 极远层（视差 0.12，更暗更矮的残破城墙轮廓）
-    const offF=parallaxOff(0.12,300); ctx.save(); ctx.fillStyle=darkMode?'#0f0714':'#140d1b';
-    for(let bx=-offF-300; bx<W+300; bx+=300) drawRuinedRampart(bx, H*0.44);
+    // 极远层：只在两侧远端各画 1 段矮小残墙（框景），不再全屏 tile
+    ctx.save(); ctx.fillStyle=darkMode?'#0f0714':'#140d1b';
+    drawRuinedRampart(-40, H*0.44);              // 左端一段
+    drawRuinedRampart(W-260, H*0.44);            // 右端一段
     ctx.restore();
-    // 远景城堡废墟（原层，视差 0.2）
-    const off=parallaxOff(0.2,360); ctx.save(); ctx.fillStyle=darkMode?'#160b1c':'#1c1424';
-    for(let bx=-off-360; bx<W+360; bx+=360){ drawRuinSilhouetteFar(bx, H*0.46); drawRuinSilhouette(bx, H*0.5); }
+    // 远景城堡废墟：中央 1 座大废墟为焦点（最高最阔），两侧对称各 1 座递减小废墟
+    // 视差保持 0.2，但按"金字塔式"锚定构图，而不是全屏铺 tile
+    const off=parallaxOff(0.2, W*2);
+    ctx.save(); ctx.fillStyle=darkMode?'#160b1c':'#1c1424';
+    // 焦点主废墟（中央，最完整最高）
+    drawRuinSilhouette(W*0.5 - 180 - off*0.05, H*0.5);
+    // 两侧副废墟（更远更破，尺寸小 65%）
+    ctx.save();
+    ctx.translate(W*0.10 - off*0.03, 0); ctx.scale(0.65, 0.75);
+    drawRuinSilhouetteFar(0, H*0.46/0.75);
+    ctx.restore();
+    ctx.save();
+    ctx.translate(W*0.82 - off*0.03, 0); ctx.scale(0.7, 0.8);
+    drawRuinSilhouetteFar(0, H*0.46/0.8);
+    ctx.restore();
     ctx.restore();
   }
 }
 function drawMidLayerFx(){
   const off=parallaxOff(0.5,300);
   if(actIndex===ACT_CASTLE){
-    // 第一幕中景：城垛（雉堞）轮廓 + 飘动旗帜
+    // 第一幕中景：城垛（雉堞）保留连续墙面（近景基底需要连贯），但装饰节奏化
     ctx.save(); ctx.fillStyle='#20263f';
-    for(let bx=-off-300; bx<W+300; bx+=300){ const top=H*0.30;
-      ctx.fillRect(bx, top, 300, H*0.12);
-      for(let m=0;m<10;m++){ if(m%2===0) ctx.fillRect(bx+m*30, top-12, 22, 12); }
-      // 城垛上的飘旗
-      drawParapetFlag(bx+70, top-12, frame*0.03);
-      drawParapetFlag(bx+220, top-12, frame*0.03+2);
+    const top=H*0.30;
+    // 连续城墙基线（覆盖整屏）
+    ctx.fillRect(0, top, W, H*0.12);
+    // 齿垛：非均匀节奏——两侧密集，中央稀疏（引导玩家视线到中央焦点主塔）
+    for(let m=0;m<32;m++){
+      // 节奏：位置按 m 号非均匀映射，跳过中央 [0.42,0.58]
+      const nx = m/32;
+      if(nx>0.42 && nx<0.58) continue; // 中央留缺口
+      if(m%2!==0) continue; // 保持齿垛间隔
+      const px = nx*W;
+      const merlonW = 20 + (nx<0.2 || nx>0.8 ? 4 : 0); // 边缘齿垛稍高
+      ctx.fillRect(px, top-12, 22, 12);
     }
+    // 城垛旗帜：仅 3 面，放在三分法锚点（左1/3、右2/3、极右角落）
+    drawParapetFlag(W*0.333, top-12, frame*0.03);
+    drawParapetFlag(W*0.667, top-12, frame*0.03+2);
+    drawParapetFlag(W*0.90,  top-12, frame*0.03+3.5);
     ctx.restore();
   } else if(actIndex===ACT_COURT){
     // 第二幕中景：宫廷柱廊透视（左右各 2 根高柱）+ 挂毯花纹
     drawCourtColonnade();
   } else if(actIndex===ACT_ESCAPE){
-    // 第三幕中景：破败电线杆 + 随风摆动电线
-    ctx.save();
-    for(let bx=-off-300; bx<W+300; bx+=300){ drawPowerPole(bx+60, H*0.62); drawPowerPole(bx+220, H*0.60);
-      const sway=Math.sin(frame*0.02+bx*0.01)*10;
-      ctx.strokeStyle='rgba(20,14,24,0.7)'; ctx.lineWidth=1.4; ctx.beginPath();
-      ctx.moveTo(bx+60,H*0.62-46); ctx.quadraticCurveTo(bx+140,H*0.62-30+sway,bx+220,H*0.60-46); ctx.stroke();
-    }
-    ctx.restore();
+    // 第三幕中景：破败电线杆 + 电线（由 drawMidFxPlus 统一处理艺术排布，这里留空避免双绘）
   } else if(actIndex===ACT_FINAL){
-    // 第五幕中景：塌陷墙壁 + 断裂柱子
+    // 第五幕中景：塌陷墙壁 + 断裂柱子 - 改为"两侧对称崩塌，中央留通道"
     ctx.save(); ctx.fillStyle=darkMode?'#221530':'#2a2038';
-    for(let bx=-off-300; bx<W+300; bx+=300) drawBrokenWall(bx, H*0.56);
+    const off=parallaxOff(0.5, W*2);
+    // 左右各 1 大段崩塌墙（框景），中央留一段空地作"王座前庭"
+    drawBrokenWall(-30 - off*0.02, H*0.56);
+    drawBrokenWall(W*0.62 - off*0.02, H*0.56);
+    // 中央焦点：一根倾斜断柱指向中心（引导视线）
+    ctx.save();
+    ctx.translate(W*0.42 - off*0.02, H*0.56);
+    ctx.rotate(0.15);
+    ctx.fillRect(0, -66, 14, 66);
+    ctx.fillRect(-4, -66, 22, 6);
+    ctx.restore();
     ctx.restore();
   }
   drawMidFxPlus();   // 【新增】中景加倍层
@@ -1518,37 +1620,109 @@ function drawSceneDecorations(){
   const t=frame*0.025;
   const nearOff=(camX*0.8)%320;
   if(actIndex===ACT_CASTLE){
-    for(let i=0;i<4;i++) drawWallTorch(90+i*220-nearOff%220, H*0.43+Math.sin(i)*10, t+i);
-    for(let i=0;i<3;i++) drawBanner(170+i*260-nearOff%260, H*0.31, '#7a1e2a', '#e8c25a', t+i*1.7);
+    // 城堡近景：火把沿三分法两侧+顶部横旗仅左右框景两面，中央留白
+    // 3 支火把 - 强对比大小：左侧焦点大火把 + 右侧对称 + 中远侧点缀
+    const torches=[
+      {x:W*0.18, y:H*0.42, s:1.15},        // 左侧近景大焰
+      {x:W*0.82, y:H*0.44, s:1.05},        // 右侧对称
+      {x:W*0.05, y:H*0.5,  s:0.75}         // 极左角落小焰（点缀）
+    ];
+    torches.forEach((f,i)=>{ ctx.save(); ctx.translate(0,0); ctx.scale(1,1);
+      drawWallTorch(f.x - nearOff*0.15, f.y+Math.sin(i)*6, t+i*1.3); ctx.restore(); });
+    // 2 面横旗只出现在左1/3与右2/3门柱位置，形成"入口"暗示
+    drawBanner(W*0.28 - (nearOff%520)*0.4, H*0.28, '#7a1e2a', '#e8c25a', t);
+    drawBanner(W*0.72 - (nearOff%520)*0.4, H*0.30, '#4a2a5a', '#e8c25a', t+2.1);
   } else if(actIndex===ACT_COURT){
-    for(let i=0;i<4;i++) drawCandelabrum(120+i*220-nearOff%220, H*0.58+Math.sin(i)*8, t+i);
-    for(let i=0;i<3;i++) drawDrapery(70+i*330-nearOff%330, H*0.05, 96, 150, t+i);
+    // 宫廷近景：地面对称三烛台（左1/3、中、右2/3）+ 顶部两幅落地长幕（框景）
+    // 中央烛台略高 -> 汇聚视线到中轴（王座感）
+    drawCandelabrum(W*0.28 - (nearOff%880)*0.15, H*0.60+Math.sin(t)*3, t);
+    drawCandelabrum(W*0.5  - (nearOff%880)*0.15, H*0.56+Math.sin(t+1.2)*3, t+1.2);  // 中央高
+    drawCandelabrum(W*0.72 - (nearOff%880)*0.15, H*0.60+Math.sin(t+2.3)*3, t+2.3);
+    // 两幅落地长幕（左右框景）
+    drawDrapery(W*0.03 - (nearOff%880)*0.10, H*0.05, 88, 200, t);
+    drawDrapery(W*0.89 - (nearOff%880)*0.10, H*0.05, 88, 200, t+1.5);
   } else if(actIndex===ACT_ESCAPE){
-    for(let i=0;i<5;i++) drawDeadTreeDecor(70+i*180-nearOff%180, H*0.72, 52+((i%2)*22));
-    for(let i=0;i<24;i++) drawGroundFlower((i*67-nearOff%67), H*0.78+Math.sin(i)*6, i);
+    // 逃亡近景：枯树沿 S 形引导线排布（远端左倾-中段右倾-近端左倾）
+    // 只用 4 棵大小差异极大的枯树，制造"节奏与呼吸"
+    const trees=[
+      {tx:0.14, h:60, sc:1.0},   // 左前景大树（视觉锚）
+      {tx:0.38, h:44, sc:0.75},  // 中远小树
+      {tx:0.62, h:52, sc:0.85},  // 中右
+      {tx:0.90, h:66, sc:1.1}    // 右前景大树（对称锚，稍大）
+    ];
+    trees.forEach((tr,i)=>{
+      const gx = tr.tx*W - (nearOff%720)*0.20;
+      const gy = H*0.72 + compGuideY(tr.tx, 8);
+      ctx.save(); ctx.translate(gx, gy); ctx.scale(tr.sc, tr.sc);
+      drawDeadTreeDecor(0, 0, tr.h); ctx.restore();
+    });
+    // 花丛聚簇（不再均匀 24 朵，改为 3 个花簇分别在 1/6、1/2 留白外、5/6）
+    const clusters=[[W*0.16,H*0.80,7],[W*0.5,H*0.83,4],[W*0.84,H*0.79,7]];
+    clusters.forEach((c,ci)=>{
+      const cx0=c[0]-(nearOff%600)*0.18, cy0=c[1];
+      for(let k=0;k<c[2];k++){
+        const ang=(k/c[2])*Math.PI*2 + ci;
+        const rr=6+hnoise(ci*7+k)*14;
+        drawGroundFlower(cx0+Math.cos(ang)*rr, cy0+Math.sin(ang)*rr*0.5, ci*17+k);
+      }
+    });
   } else if(actIndex===ACT_ENGLAND){
     // 英格兰海景已由 drawEnglandBackground 统一绘制（含波浪/帆船/灯塔），此处不再叠加旧的绳索/铁锚残留
   } else if(actIndex===ACT_FINAL){
+    // 终局近景重构：中央王座为焦点，左右两侧对称"崩塌前景"框景，中间通道留白
+    // 王座保持中央焦点位置
     drawThrone(W/2-(camX*0.2%80), H*0.58, darkMode);
-    for(let i=0;i<12;i++) drawSkullDecor(38+i*92-nearOff%92, H*0.79+Math.sin(i*1.7)*6, i);
-    // 近景地面碎石散落（确定性 index 伪随机，视差 0.8）
+    // 骷髅：8 处沿"战场遗骸弧线"排布（远近弧线感），避开中央 30% 通道
+    for(let i=0;i<8;i++){
+      const t=i/7;
+      const nx=t<0.5 ? 0.06+t*0.55 : 0.44+t*0.55; // 跳过 [0.39,0.44] 中央
+      const sx=nx*W - (nearOff%620)*0.12;
+      const sy=H*0.82 + compGuideY(t, 14);
+      drawSkullDecor(sx, sy, i);
+    }
+    // 碎石：仅在两侧堆积（框景），中央通道保持干净
     ctx.save(); ctx.fillStyle=darkMode?'rgba(30,20,40,0.9)':'rgba(46,36,58,0.9)';
-    for(let i=0;i<26;i++){ const rx=(i*74 - nearOff%74*3 + i*13)%(W+80)-40; const ry=H*0.86+hnoise(i)*40; const s=3+hnoise(i+9)*7;
-      ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.6); ctx.lineTo(rx+s*1.8,ry); ctx.lineTo(rx+s*0.9,ry+s*0.5); ctx.closePath(); ctx.fill(); }
-    // 额外更多碎石（第二组，不同分布密度）
-    for(let i=0;i<26;i++){ const rx=(i*91 - nearOff%91*2 + i*7 + 37)%(W+80)-40; const ry=H*0.83+hnoise(i+40)*46; const s=2+hnoise(i+51)*5;
-      ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.5); ctx.lineTo(rx+s*1.6,ry); ctx.lineTo(rx+s*0.8,ry+s*0.5); ctx.closePath(); ctx.fill(); }
+    for(let side=0;side<2;side++){
+      const sign = side===0?-1:1;
+      const anchor = side===0? W*0.16 : W*0.84;
+      for(let i=0;i<11;i++){
+        const spread = 60 + hnoise(side*20+i)*90;
+        const rx = anchor + sign*spread - (nearOff%620)*0.18*sign;
+        const ry = H*0.86 + hnoise(i+side*17)*30;
+        const s  = 3 + hnoise(i+side*29+3)*6;
+        ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx+s,ry-s*0.6);
+        ctx.lineTo(rx+s*1.8,ry); ctx.lineTo(rx+s*0.9,ry+s*0.5); ctx.closePath(); ctx.fill();
+      }
+    }
     ctx.restore();
-    // 7 根断裂石柱（近景，视差 0.8，确定性外观）
-    for(let i=0;i<7;i++){ const cx=(i*196 - (nearOff%196)*2 + i*31)%(W+180)-90; const cy=H*0.82+hnoise(i*3)*22; drawBrokenColumnBg(cx, cy, i%3, i); }
-    // 8 处破碎盔甲 / 折断武器散落
-    for(let i=0;i<8;i++){ const ax=(i*158 - (nearOff%158)*3 + i*19 + 60)%(W+120)-60; const ay=H*0.86+hnoise(i+17)*34; drawArmorDebris(ax, ay, i); }
-    // 熔岩裂缝地面（阶段三更亮更密）
+    // 断柱：5 根不再均匀 7 根堆叠 - 采用"教堂式"层次：
+    // 两侧最矮的柱础(type=2) + 中景倾倒断柱(type=1) + 焦点两侧对称直立残柱(type=0)
+    const cols=[
+      {x:W*0.08, y:H*0.84, type:2},                  // 左边缘柱础
+      {x:W*0.24, y:H*0.83, type:1},                  // 左倾倒
+      {x:W*0.34, y:H*0.80, type:0},                  // 左焦点直立
+      {x:W*0.66, y:H*0.80, type:0},                  // 右焦点直立（对称）
+      {x:W*0.78, y:H*0.83, type:1},                  // 右倾倒（镜像）
+      {x:W*0.94, y:H*0.84, type:2}                   // 右边缘柱础
+    ];
+    cols.forEach((c,i)=>{
+      const cx = c.x - (nearOff%720)*0.22;
+      drawBrokenColumnBg(cx, c.y, c.type, i*11);
+    });
+    // 破碎盔甲/武器：6 处，与骷髅弧线交错，形成"战场余烬"排布
+    for(let i=0;i<6;i++){
+      const t=(i+0.5)/6;
+      const nx = t<0.5 ? 0.08+t*0.45 : 0.47+t*0.45;
+      const ax = nx*W - (nearOff%620)*0.16;
+      const ay = H*0.87 + compGuideY(t+0.15, 10);
+      drawArmorDebris(ax, ay, i*7+3);
+    }
+    // 熔岩裂缝地面：由函数内部做"两侧密-中央稀"分布
     const ph3dec = boss && boss.kind==='claudius' && boss.phase>=3;
     drawLavaCrackGround(nearOff, ph3dec);
-    // 2 处燃烧的破旗残骸
-    drawBurningFlag((W*0.24 - (camX*0.8)%420 + 420)%(W+200)-100, H*0.88, frame*0.05);
-    drawBurningFlag((W*0.72 - (camX*0.8)%520 + 520)%(W+200)-100, H*0.9, frame*0.05+2.2);
+    // 燃烧破旗：2 处严格对称三分法（左1/3、右2/3），旗杆倾向中央如"哀悼战旗"
+    drawBurningFlag(W*0.30 - (camX*0.8)%W*0.001, H*0.88, frame*0.05);
+    drawBurningFlag(W*0.70 - (camX*0.8)%W*0.001, H*0.89, frame*0.05+2.2);
   }
   drawSceneDecoPlus();   // 【新增】近景装饰加倍层
 }
@@ -1695,18 +1869,36 @@ function drawWaveHighlight(yBase, amp, freq, speed, color, t){
 }
 function drawEnglandRocks(){
   ctx.save();
-  const off=(camX*0.7)%260, baseY=H-4;
+  const off=(camX*0.7)%W, baseY=H-4;
   ctx.fillStyle='#1a1a2a';
-  for(let bx=-off-60; bx<W+120; bx+=210){
+  // 前景岩礁：3 组，按黄金分割排布——左1/3小、右2/3大主礁、极右小礁角落
+  // 主礁位于灯塔正下方一侧（呼应灯塔焦点）
+  const reefs=[
+    {cx:0.16, w:180, hMul:0.9},   // 左次礁
+    {cx:0.60, w:260, hMul:1.15},  // 右主礁（焦点，最阔最高）
+    {cx:0.94, w:110, hMul:0.75}   // 极右角落点缀
+  ];
+  reefs.forEach(reef=>{
+    const bx = reef.cx*W - off*0.06 - reef.w/2;
     ctx.beginPath();
-    ctx.moveTo(bx, H); ctx.lineTo(bx+6, baseY-18); ctx.lineTo(bx+34, baseY-26);
-    ctx.lineTo(bx+70, baseY-14); ctx.lineTo(bx+108, baseY-22); ctx.lineTo(bx+150, baseY-10);
-    ctx.lineTo(bx+180, baseY-20); ctx.lineTo(bx+210, H); ctx.closePath(); ctx.fill();
-    // 苔藓绿点缀
-    ctx.fillStyle='#2d4a2d';
-    ctx.fillRect(bx+30, baseY-24, 4, 3); ctx.fillRect(bx+66, baseY-13, 3, 3); ctx.fillRect(bx+120, baseY-19, 4, 2);
-    ctx.fillStyle='#1a1a2a';
-  }
+    ctx.moveTo(bx, H);
+    ctx.lineTo(bx+6*reef.hMul, baseY-18*reef.hMul);
+    ctx.lineTo(bx+34, baseY-26*reef.hMul);
+    ctx.lineTo(bx+70, baseY-14*reef.hMul);
+    ctx.lineTo(bx+reef.w*0.5, baseY-30*reef.hMul);  // 峰
+    ctx.lineTo(bx+reef.w*0.72, baseY-22*reef.hMul);
+    ctx.lineTo(bx+reef.w*0.9, baseY-12*reef.hMul);
+    ctx.lineTo(bx+reef.w, H);
+    ctx.closePath(); ctx.fill();
+    // 苔藓绿点缀 - 只在主礁与次礁上有（点睛）
+    if(reef.w>=180){
+      ctx.fillStyle='#2d4a2d';
+      ctx.fillRect(bx+30, baseY-24*reef.hMul, 4, 3);
+      ctx.fillRect(bx+reef.w*0.35, baseY-28*reef.hMul, 4, 3);
+      ctx.fillRect(bx+reef.w*0.65, baseY-24*reef.hMul, 3, 3);
+      ctx.fillStyle='#1a1a2a';
+    }
+  });
   ctx.restore();
 }
 function drawThrone(x,y,doom){
@@ -1836,10 +2028,49 @@ function drawFinalCloudBands(){
                 {y:H*0.20,h:28,sp:0.36,a:0.24,col:doom?'52,30,64':'40,48,74'},
                 {y:H*0.30,h:22,sp:0.52,a:0.18,col:doom?'64,36,72':'48,56,84'} ];
   for(let bi=0;bi<bands.length;bi++){ const bd=bands[bi];
-    for(let c=0;c<6;c++){ const seed=bi*97+c*53; const x=((frame*bd.sp + c*(W/5+40) + seed*7)%(W+320))-160; const y=bd.y+((seed%7)-3)*4;
-      const rw=90+ (seed%5)*22, rh=bd.h;
-      const g=ctx.createRadialGradient(x,y,4,x,y,rw); g.addColorStop(0,'rgba('+bd.col+','+bd.a.toFixed(3)+')'); g.addColorStop(1,'rgba('+bd.col+',0)');
-      ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(x,y,rw,rh,0,0,6.283); ctx.fill(); }
+    // 每层 5 朵云，按非均匀节奏排布：两侧密集，中央焦点上方稀薄（"天光洞口"感）
+    for(let c=0;c<5;c++){
+      const seed=bi*97+c*53;
+      // 位置：0.10 / 0.28 / 空/ 0.72 / 0.90（中央 [0.4-0.6] 留白）
+      const anchors=[0.10, 0.28, 0.50, 0.72, 0.90];
+      const nx=anchors[c];
+      // 中央那朵变小变淡（模拟阳光从裂开的云层洒下焦点）
+      const centerness = 1 - Math.min(1, Math.abs(nx-0.5)/0.5);
+      const rw = (90 + (seed%5)*22) * (1 - centerness*0.55);
+      const rh = bd.h * (1 - centerness*0.35);
+      const alpha = bd.a * (1 - centerness*0.55);
+      const drift=(frame*bd.sp + c*(W/5+40) + seed*7);
+      // 云沿慢速漂移，但保持"锚位" - drift 只用作轻微游走
+      const x = nx*W + Math.sin(drift*0.01)*30;
+      const y = bd.y + ((seed%7)-3)*4;
+      const g=ctx.createRadialGradient(x,y,4,x,y,rw);
+      g.addColorStop(0,'rgba('+bd.col+','+alpha.toFixed(3)+')');
+      g.addColorStop(1,'rgba('+bd.col+',0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(x,y,rw,rh,0,0,6.283); ctx.fill();
+    }
+  }
+  // 中央焦点的一束天光（焦点色呼应，暗示光柱穿云）
+  if(!doom){
+    const beamX=W*0.5, beamTop=H*0.06, beamBot=H*0.42;
+    const g=ctx.createLinearGradient(beamX, beamTop, beamX, beamBot);
+    g.addColorStop(0,'rgba(240,220,160,0.14)');
+    g.addColorStop(1,'rgba(240,220,160,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(beamX-30, beamTop); ctx.lineTo(beamX+30, beamTop);
+    ctx.lineTo(beamX+80, beamBot); ctx.lineTo(beamX-80, beamBot);
+    ctx.closePath(); ctx.fill();
+  } else {
+    // doom 版：中央为血色雾柱（悲剧氛围）
+    const beamX=W*0.5, beamTop=H*0.06, beamBot=H*0.42;
+    const g=ctx.createLinearGradient(beamX, beamTop, beamX, beamBot);
+    g.addColorStop(0,'rgba(120,20,40,0.08)');
+    g.addColorStop(1,'rgba(120,20,40,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(beamX-40, beamTop); ctx.lineTo(beamX+40, beamTop);
+    ctx.lineTo(beamX+90, beamBot); ctx.lineTo(beamX-90, beamBot);
+    ctx.closePath(); ctx.fill();
   }
   ctx.restore();
 }
@@ -1886,12 +2117,32 @@ function drawLavaCrackGround(nearOff, ph3){
   const pulse=0.5+0.5*Math.sin(frame*0.1);
   const cnt=ph3?9:5;
   ctx.shadowColor='rgba(255,90,20,0.9)'; ctx.shadowBlur=(ph3?16:10)*pulse+4;
-  for(let i=0;i<cnt;i++){ const cx=((i*173 - (nearOff%97)*2 + i*29)%(W+120))-60; const baseY=H*0.9+hnoise(i+2)*28;
-    const g=ph3?(0.5+0.4*pulse):(0.3+0.3*pulse);
-    ctx.strokeStyle='rgba(255,'+((80+60*pulse)|0)+',26,'+g.toFixed(3)+')'; ctx.lineWidth=(ph3?2.2:1.5)+pulse*1.6;
-    ctx.beginPath(); ctx.moveTo(cx,baseY);
-    for(let j=1;j<=5;j++){ const x=cx+(hnoise(i*7+j)-0.5)*60, y=baseY-j*10; ctx.lineTo(x,y); }
-    ctx.stroke();
+  // 熔岩裂缝：两侧密集，中央保持通道（王座通道感）
+  // 左右各分一半数量，位置从边缘向中央递减但不到达焦点区
+  for(let side=0;side<2;side++){
+    const sign = side===0?-1:1;
+    const anchorNX = side===0? 0.15 : 0.85;
+    const halfCnt = Math.ceil(cnt/2);
+    for(let i=0;i<halfCnt;i++){
+      const spread = 0.02 + i*(0.28/halfCnt) + hnoise(i+side*17)*0.05;
+      const nx = anchorNX + sign*spread;
+      // 跳过中央通道 [0.42,0.58]
+      if(nx>0.42 && nx<0.58) continue;
+      const cx = nx*W - (nearOff%97)*0.6*sign;
+      const baseY = H*0.9 + hnoise(i+2+side*7)*22;
+      const g = ph3 ? (0.55+0.4*pulse) : (0.32+0.3*pulse);
+      ctx.strokeStyle = 'rgba(255,'+((80+60*pulse)|0)+',26,'+g.toFixed(3)+')';
+      ctx.lineWidth = (ph3?2.2:1.5)+pulse*1.6;
+      ctx.beginPath(); ctx.moveTo(cx, baseY);
+      // 裂缝走向偏向中央（"指向"焦点，形成隐形箭头感）
+      for(let j=1;j<=5;j++){
+        const jitter = (hnoise(i*7+j+side*11)-0.5)*40;
+        const x = cx + jitter - sign*j*4;
+        const y = baseY - j*10;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
   }
   ctx.shadowBlur=0; ctx.restore();
 }
@@ -2095,41 +2346,136 @@ function drawThinRain(){
 // —— 远景加倍：第一幕第二圈外城墙；第三幕远景三层山脊 ——
 function drawFarFxPlus(){
   if(actIndex===ACT_CASTLE){
-    const off=parallaxOff(0.14,300); ctx.save(); ctx.fillStyle=darkMode?'#0b0712':'#141a30';
-    for(let bx=-off-300; bx<W+300; bx+=300){ const top=H*0.26;
-      ctx.fillRect(bx, top, 300, H*0.10);
-      for(let m=0;m<12;m++){ if(m%2===0) ctx.fillRect(bx+m*25, top-9, 15, 9); } // 外墙齿垛
-      ctx.fillRect(bx+128, top-44, 40, 44);                                     // 远塔
-      for(let m=0;m<4;m++){ if(m%2===0) ctx.fillRect(bx+128+m*10, top-52, 7, 8); }
+    // 城堡远景：不再均匀 300 像素填 tile 城墙，改为"焦点主塔 + 逐级衰减副塔"
+    // 主塔位于右2/3焦点，副塔沿两侧递减，形成层次分明的天际线
+    const off=parallaxOff(0.14, W); ctx.save();
+    ctx.fillStyle=darkMode?'#0b0712':'#141a30';
+    // 底部一条稀薄的远景城墙基线（薄，不喧宾夺主）
+    const wallTop=H*0.32;
+    ctx.fillRect(0, wallTop, W, H*0.03);
+    // 焦点主塔（右2/3锚）
+    const towers=[
+      {x:W*0.666, hg:130, w:56, cren:5}, // 主塔（焦点，最高最阔）
+      {x:W*0.32,  hg:88,  w:38, cren:4}, // 左副塔（次焦）
+      {x:W*0.14,  hg:56,  w:26, cren:3}, // 左远塔（递减）
+      {x:W*0.86,  hg:70,  w:30, cren:3}, // 右远塔（对称递减）
+      {x:W*0.50,  hg:36,  w:22, cren:2}  // 中央矮塔（谷底填充）
+    ];
+    for(const t of towers){
+      const tx = t.x - (off*(t.hg/130))%W*0.001; // 主塔视差略慢
+      // 塔身
+      ctx.fillRect(tx - t.w/2, wallTop - t.hg + wallTop*0, wallTop - (wallTop - t.hg), 0); // 无操作占位
+      ctx.fillRect(tx - t.w/2, wallTop - t.hg, t.w, t.hg + H*0.02);
+      // 齿垛
+      for(let m=0;m<t.cren;m++){
+        if(m%2===0) ctx.fillRect(tx - t.w/2 + m*(t.w/t.cren), wallTop - t.hg - 8, t.w/t.cren*0.7, 8);
+      }
+      // 焦点主塔顶部小尖顶（画龙点睛）
+      if(t.hg>=100){
+        ctx.beginPath();
+        ctx.moveTo(tx - t.w*0.3, wallTop - t.hg - 8);
+        ctx.lineTo(tx, wallTop - t.hg - 24);
+        ctx.lineTo(tx + t.w*0.3, wallTop - t.hg - 8);
+        ctx.closePath(); ctx.fill();
+      }
     }
+    // 主塔窗光（焦点色呼应）
+    ctx.fillStyle = compAccent(ACT_CASTLE);
+    ctx.globalAlpha = 0.6;
+    ctx.fillRect(W*0.666 - 3, wallTop - 90, 6, 6);
+    ctx.fillRect(W*0.666 - 3, wallTop - 60, 6, 5);
+    ctx.globalAlpha = 1;
     ctx.restore();
   } else if(actIndex===ACT_ESCAPE){
-    const layers=[
-      {f:0.09, base:0.42, amp:50, col:darkMode?'#0d0914':'#130d1b'},
-      {f:0.14, base:0.48, amp:64, col:darkMode?'#110b18':'#17101f'}
-    ];
+    // 逃亡远景：主峰放在左1/3焦点，副峰递减向右延伸（构图有"引导"）
     ctx.save();
-    for(const L of layers){ const off=parallaxOff(L.f,W); ctx.fillStyle=L.col;
-      for(let seg=-1;seg<=1;seg++){ const bx=-off+seg*W; ctx.beginPath(); ctx.moveTo(bx,H); ctx.lineTo(bx,H*L.base);
-        for(let x=0;x<=W;x+=34){ const n=hnoise(((x/34)|0)+L.base*10); ctx.lineTo(bx+x, H*L.base - n*L.amp - Math.sin(x*0.008+L.f*20)*14); }
-        ctx.lineTo(bx+W,H); ctx.closePath(); ctx.fill(); }
+    // 极远层：单一大主峰 + 2 座副峰（不再全屏波浪填满）
+    const peaks=[
+      {cx:0.33, h:110, col:darkMode?'#0d0914':'#130d1b', par:0.08}, // 焦点主峰
+      {cx:0.62, h:78,  col:darkMode?'#0f0b16':'#150f1d', par:0.10}, // 次峰
+      {cx:0.88, h:56,  col:darkMode?'#110b18':'#17101f', par:0.11}  // 远端小峰
+    ];
+    for(const p of peaks){
+      const off=parallaxOff(p.par, W*2);
+      ctx.fillStyle=p.col;
+      const cx=p.cx*W - off*0.5;
+      const baseY=H*0.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - p.h*1.2, H);
+      ctx.lineTo(cx - p.h*1.2, baseY);
+      // 主峰折线
+      for(let x=-1;x<=1;x+=0.05){
+        const px=cx + x*p.h*1.2;
+        const py=baseY - (1 - Math.abs(x)) * p.h + hnoise((px/10)|0) * 8;
+        ctx.lineTo(px, py);
+      }
+      ctx.lineTo(cx + p.h*1.2, H);
+      ctx.closePath(); ctx.fill();
     }
     ctx.restore();
   }
 }
 // —— 中景加倍：第一幕加旗帜/城垛；第二幕加柱廊；第三幕加电线杆+枯树中层 ——
 function drawMidFxPlus(){
-  const off=parallaxOff(0.5,320); ctx.save();
+  ctx.save();
   if(actIndex===ACT_CASTLE){
-    // 额外城堡旗帜（原有基础上增至 4-5 面，不同颜色/高度）
-    const flags=[{dx:60,c:'#7a2230',h:40},{dx:150,c:'#2a4a7a',h:52},{dx:210,c:'#6a5a20',h:34},{dx:270,c:'#5a2a5a',h:46}];
-    for(let bx=-off-320; bx<W+320; bx+=320){ for(const f of flags){ drawMidBanner(bx+f.dx, H*0.30, f.c, f.h); } }
+    // 城堡中景：不再 tile 4 面同尺寸旗，改为"焦点大旗 + 两侧对称小旗"（三分法）
+    const off=parallaxOff(0.5, W*2);
+    const flags=[
+      {cx:0.333, c:'#7a2230', h:56, w:1.3, par:0.32},  // 左1/3焦点大王旗
+      {cx:0.666, c:'#2a4a7a', h:52, w:1.2, par:0.34},  // 右2/3副旗
+      {cx:0.14,  c:'#5a2a5a', h:32, w:0.8, par:0.30},  // 左远小旗
+      {cx:0.86,  c:'#6a5a20', h:30, w:0.8, par:0.30}   // 右远小旗
+    ];
+    for(const f of flags){
+      const fx = f.cx*W - off*f.par*0.02;
+      ctx.save(); ctx.translate(fx, H*0.30); ctx.scale(f.w, 1);
+      drawMidBanner(0, 0, f.c, f.h);
+      ctx.restore();
+    }
   } else if(actIndex===ACT_COURT){
-    // 额外宫廷柱廊（原有 2→共 4-5 根），不同花纹
-    for(let bx=-off-320; bx<W+320; bx+=320){ [40,120,240,300].forEach((dx,i)=> drawMidPillar(bx+dx, H*0.24, H*0.34, i)); }
+    // 宫廷中景：柱廊改为"透视汇聚"——柱子间距逐渐收窄，把视线导向中心王座
+    // 左3根+右3根，越靠近中心越窄；柱高逐渐降低（伪透视）
+    const off=parallaxOff(0.5, W*2);
+    const cols=[
+      {cx:0.06,  h:H*0.42, w:1.0},
+      {cx:0.20,  h:H*0.38, w:0.90},
+      {cx:0.36,  h:H*0.34, w:0.80},
+      {cx:0.64,  h:H*0.34, w:0.80},  // 右侧镜像
+      {cx:0.80,  h:H*0.38, w:0.90},
+      {cx:0.94,  h:H*0.42, w:1.0}
+    ];
+    cols.forEach((c,i)=>{
+      const cx = c.cx*W - off*0.02;
+      ctx.save(); ctx.translate(cx, H*0.24); ctx.scale(c.w, 1);
+      drawMidPillar(0, 0, c.h, i);
+      ctx.restore();
+    });
   } else if(actIndex===ACT_ESCAPE){
-    // 额外电线杆（原 1-2→共 4-5）+ 中层枯树
-    for(let bx=-off-320; bx<W+320; bx+=320){ [30,150,270].forEach(dx=> drawMidPole(bx+dx, H*0.58)); drawMidDeadTree(bx+90, H*0.62, 0.7); drawMidDeadTree(bx+220, H*0.60, 0.85); }
+    // 逃亡中景：电线杆沿逃亡路线延伸——远端多、近端稀（暗示"距离越拉越远"）
+    const off=parallaxOff(0.5, W*2);
+    // 4 根电线杆按黄金分割距离排列，非等距
+    const poles=[0.12, 0.30, 0.55, 0.86];
+    poles.forEach((tx,i)=>{
+      const px = tx*W - off*0.02;
+      const py = H*0.58 + i*4; // 越近略低（伪透视）
+      drawMidPole(px, py);
+    });
+    // 电线连续贯穿（画一条从左到右的完整电线，随风摆动，形成引导线）
+    ctx.strokeStyle='rgba(20,16,24,0.55)'; ctx.lineWidth=1;
+    ctx.beginPath();
+    let prev=null;
+    poles.forEach((tx,i)=>{
+      const px=tx*W - off*0.02;
+      const py=(H*0.58+i*4)-58 + Math.sin(frame*0.02+i)*4;
+      if(!prev){ ctx.moveTo(px, py); }
+      else { ctx.quadraticCurveTo((prev[0]+px)/2, (prev[1]+py)/2 + 8, px, py); }
+      prev=[px,py];
+    });
+    ctx.stroke();
+    // 中层枯树：两侧对称各 1 棵（框景）
+    drawMidDeadTree(W*0.08 - off*0.02, H*0.62, 0.9);
+    drawMidDeadTree(W*0.92 - off*0.02, H*0.60, 1.05);
   }
   ctx.restore();
 }
@@ -2163,36 +2509,78 @@ function drawMidDeadTree(x,yBase,s){
 function drawSceneDecoPlus(){
   const nOff=parallaxOff(0.8,W);
   if(actIndex===ACT_CASTLE){
-    // 前景城垛砖缝纹理带（灰/深灰交替+缝隙暗线）
+    // 前景城垛砖缝纹理带（保留：地面砖纹是"底"，需要覆盖整个宽度）
     ctx.save(); const by=H-46;
     for(let x=-((camX*0.9)%64); x<W; x+=64){ for(let r=0;r<2;r++){ const yy=by+r*22;
       ctx.fillStyle=(Math.floor(x/64)+r)%2? '#33313c':'#3c3a46'; ctx.fillRect(x,yy,64,22);
       ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,yy+0.5,64,22); } }
     ctx.restore();
-    // 地面镜面水坑（动态波纹）
-    [ [W*0.28,'#2a3550'], [W*0.62,'#243048'] ].forEach((p,i)=>{ const px=(p[0]-(camX*0.9)%W+W)%W; drawPuddle(px, H*0.9, 70, p[1], i); });
-    // 破碎石柱（不同高度，作遮蔽）
-    [ [W*0.2,60],[W*0.45,90],[W*0.75,48] ].forEach(c=>{ const px=(c[0]-(camX*0.85)%W+W)%W; drawBrokenColumn(px, H*0.86, c[1]); });
-    // 火把（燃烧/熄灭交替，2-4 根）
-    [ [W*0.15,true],[W*0.4,false],[W*0.68,true],[W*0.9,false] ].forEach(t=>{ const px=(t[0]-(camX*0.85)%W+W)%W; drawSceneTorch(px, H*0.72, t[1]); });
+    // 水坑：2 处三分法（呼应主塔倒影）
+    [ [W*0.28,'#2a3550'], [W*0.72,'#243048'] ].forEach((p,i)=>{
+      const px=(p[0]-(camX*0.9)%W+W)%W;
+      drawPuddle(px, H*0.9, 78, p[1], i);
+    });
+    // 前景破碎石柱：只保留 2 根作为"两侧框景"（原 3 根等距 → 2 根边缘）
+    [ [W*0.06,72],[W*0.94,64] ].forEach(c=>{
+      const px=(c[0]-(camX*0.85)%W+W)%W;
+      drawBrokenColumn(px, H*0.86, c[1]);
+    });
+    // 场景火把：仅左右两端各 1 支（引路灯感），中间留白
+    drawSceneTorch(W*0.08 - (camX*0.85)%W*0.001, H*0.72, true);
+    drawSceneTorch(W*0.92 - (camX*0.85)%W*0.001, H*0.72, true);
   } else if(actIndex===ACT_COURT){
-    // 几何纹路地毯（深红+金）
-    ctx.save(); const cy=H-30; for(let x=-((camX*0.9)%80); x<W; x+=80){ ctx.fillStyle=(Math.floor(x/80)%2)?'#5a1e28':'#6a2430'; ctx.fillRect(x,cy,80,30);
-      ctx.strokeStyle='rgba(232,194,90,0.5)'; ctx.lineWidth=2; ctx.strokeRect(x+6,cy+5,68,20);
-      ctx.beginPath(); ctx.moveTo(x+40,cy+5); ctx.lineTo(x+52,cy+15); ctx.lineTo(x+40,cy+25); ctx.lineTo(x+28,cy+15); ctx.closePath(); ctx.stroke(); }
+    // 几何纹路地毯——中央菱形金纹作为"中轴引导"，边缘素色
+    ctx.save(); const cy=H-30;
+    for(let x=-((camX*0.9)%80); x<W; x+=80){
+      const centerness = 1 - Math.min(1, Math.abs((x+40) - W/2) / (W*0.4));
+      ctx.fillStyle=(Math.floor(x/80)%2)?'#5a1e28':'#6a2430';
+      ctx.fillRect(x,cy,80,30);
+      // 中央菱形加金
+      if(centerness > 0.2){
+        ctx.strokeStyle='rgba(232,194,90,'+(0.35+centerness*0.5).toFixed(2)+')';
+        ctx.lineWidth=2; ctx.strokeRect(x+6,cy+5,68,20);
+        ctx.beginPath(); ctx.moveTo(x+40,cy+5); ctx.lineTo(x+52,cy+15);
+        ctx.lineTo(x+40,cy+25); ctx.lineTo(x+28,cy+15); ctx.closePath(); ctx.stroke();
+      }
+    }
     ctx.restore();
-    // 额外烛台（原有基础上增至 8-10 个），亮度各异
-    for(let i=0;i<6;i++){ const px=((i*160+40)-(camX*0.85)%W+W)%W; drawSceneCandle(px, H*0.66, i); }
-    // 中央吊灯（悬挂+光晕）
-    drawChandelier(W*0.5, H*0.16);
+    // 场景烛台：3 处，中央 1 个高，两侧对称——朝王座聚拢
+    const candlesX=[W*0.24, W*0.5, W*0.76];
+    candlesX.forEach((cx,i)=>{
+      const px=(cx-(camX*0.85)%W+W)%W;
+      drawSceneCandle(px, i===1? H*0.62 : H*0.66, i);
+    });
+    // 中央吊灯（金色焦点色呼应）
+    drawChandelier(W*0.5, H*0.14);
   } else if(actIndex===ACT_ESCAPE){
-    // 地面落叶（棕/黄小矩形旋转）
-    ctx.save(); for(let i=0;i<26;i++){ const seed=i*41; const x=((seed*19)%W - (camX*0.9)%W + W)%W; const y=H-40+ (seed%18); const rot=frame*0.02+seed;
-      ctx.save(); ctx.translate(x,y+Math.sin(frame*0.03+seed)*2); ctx.rotate(rot); ctx.fillStyle=(seed%2)?'#8a5a2a':'#a8862e'; ctx.fillRect(-3,-2,6,4); ctx.restore(); }
+    // 落叶：从右上到左下的斜向"风向"分布（不再全屏 26 片均匀）
+    // 12 片落叶沿一条隐形斜线漂移，营造风向感
+    ctx.save();
+    for(let i=0;i<12;i++){
+      const t=i/12;
+      // 落叶从右上飘到左下，形成对角引导线
+      const baseX = W*(0.95 - t*0.9);
+      const baseY = H*(0.55 + t*0.4);
+      const wobble = Math.sin(frame*0.03+i)*10;
+      const x = ((baseX + frame*0.4) - (camX*0.9)%W + W)%W;
+      const y = baseY + wobble;
+      const rot=frame*0.02+i*1.7;
+      ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+      ctx.fillStyle=(i%2)?'#8a5a2a':'#a8862e'; ctx.fillRect(-3,-2,6,4);
+      ctx.restore();
+    }
     ctx.restore();
-    // 三色奥菲莉亚花瓣飘落
-    for(let i=0;i<18;i++){ const seed=i*57; const cols=['#ffd0e6','#ffffff','#e0c8ff']; const x=((seed*23)%W + frame*0.6)%W; const y=((seed*31)%H + frame*1.4)%H;
-      ctx.save(); ctx.globalAlpha=0.7; ctx.fillStyle=cols[seed%3]; ctx.translate(x,y); ctx.rotate(frame*0.02+seed); ctx.beginPath(); ctx.ellipse(0,0,4,2.2,0,0,6.283); ctx.fill(); ctx.restore(); }
+    // 花瓣：奥菲莉亚气息—— 集中在右上到左下的空气流场（不再全屏均匀）
+    for(let i=0;i<12;i++){
+      const seed=i*57;
+      const cols=['#ffd0e6','#ffffff','#e0c8ff'];
+      const t=(i+frame*0.001)%1;
+      const x=((0.15 + t*0.7)*W + Math.sin(frame*0.02+seed)*40)%W;
+      const y=((0.15 + t*0.5)*H + Math.cos(frame*0.03+seed)*30)%H;
+      ctx.save(); ctx.globalAlpha=0.55+Math.sin(frame*0.03+seed)*0.2;
+      ctx.fillStyle=cols[seed%3]; ctx.translate(x,y); ctx.rotate(frame*0.02+seed);
+      ctx.beginPath(); ctx.ellipse(0,0,4,2.2,0,0,6.283); ctx.fill(); ctx.restore();
+    }
   }
 }
 function drawPuddle(x,y,w,col,seed){
